@@ -1,7 +1,15 @@
-import chalk from 'chalk';
-import ora from 'ora';
 import { MiMoClient } from '../api/client.js';
-import type { AgentOptions, AgentResult, ChatMessage, RuntimeConfig, ToolDefinition, TokenUsage } from '../types.js';
+import type {
+  AgentEvent,
+  AgentOptions,
+  AgentResult,
+  AgentRunCallbacks,
+  ChatMessage,
+  RuntimeConfig,
+  ToolCall,
+  ToolDefinition,
+  TokenUsage,
+} from '../types.js';
 import { errorMessage } from '../utils/errors.js';
 import { DEFAULT_SYSTEM_PROMPT } from './prompt.js';
 import { mergeUsage } from './usage.js';
@@ -19,7 +27,7 @@ export class CodingAgent {
     this.client = new MiMoClient({ ...config, systemPrompt: this.systemPrompt });
   }
 
-  async run(task: string): Promise<AgentResult> {
+  async run(task: string, callbacks: AgentRunCallbacks = {}): Promise<AgentResult> {
     const systemPrompt = this.systemPrompt;
     const messages: ChatMessage[] = [
       { role: 'system', content: systemPrompt },
@@ -29,18 +37,23 @@ export class CodingAgent {
     let usage: TokenUsage = {};
 
     for (let iteration = 1; iteration <= this.options.maxIterations; iteration += 1) {
-      const spinner = ora(`Thinking (${iteration}/${this.options.maxIterations})`).start();
-      const response = await this.client.complete(messages, this.tools);
-      spinner.stop();
+      emit(callbacks, { type: 'thinking', iteration, maxIterations: this.options.maxIterations });
+      const response = await this.client.complete(messages, this.tools).catch((error: unknown) => {
+        const message = errorMessage(error);
+        emit(callbacks, { type: 'error', message });
+        throw error;
+      });
       usage = mergeUsage(usage, response.rawUsage);
 
       if (response.content) {
         finalMessage = response.content;
-        console.log(chalk.cyan('\nMiMo:'), response.content.trim());
+        emit(callbacks, { type: 'assistant_message', content: response.content.trim() });
       }
 
       if (response.toolCalls.length === 0) {
-        return { finalMessage, iterations: iteration, usage };
+        const result = { finalMessage, iterations: iteration, usage };
+        emit(callbacks, { type: 'done', result });
+        return result;
       }
 
       messages.push({ role: 'assistant', content: response.content, toolCalls: response.toolCalls });
@@ -51,19 +64,44 @@ export class CodingAgent {
           messages.push({ role: 'tool', toolCallId: toolCall.id, name: toolCall.name, content: `Unknown tool: ${toolCall.name}` });
           continue;
         }
-        console.log(chalk.gray(`\n→ ${toolCall.name} ${JSON.stringify(toolCall.input)}`));
+        emit(callbacks, { type: 'tool_call', id: toolCall.id, name: toolCall.name, input: toolCall.input });
+        const approval = await approveToolCall(toolCall, tool, callbacks, this.options.autoApprove);
+        if (approval === 'deny') {
+          const content = `Tool call denied by user: ${toolCall.name}`;
+          emit(callbacks, { type: 'tool_result', id: toolCall.id, name: tool.name, content });
+          messages.push({ role: 'tool', toolCallId: toolCall.id, name: tool.name, content });
+          continue;
+        }
         const content = await tool.run(toolCall.input, this.options).catch((error: unknown) => `Tool error: ${errorMessage(error)}`);
-        console.log(chalk.gray(truncate(content, 3000)));
+        emit(callbacks, { type: 'tool_result', id: toolCall.id, name: tool.name, content });
         messages.push({ role: 'tool', toolCallId: toolCall.id, name: tool.name, content });
       }
     }
 
     const message = `Stopped after ${this.options.maxIterations} iterations. Ask a more focused question or increase --max-iterations.`;
-    return { finalMessage: finalMessage || message, iterations: this.options.maxIterations, usage };
+    const result = { finalMessage: finalMessage || message, iterations: this.options.maxIterations, usage };
+    emit(callbacks, { type: 'done', result });
+    return result;
   }
 }
 
-function truncate(value: string, maxLength: number): string {
-  if (value.length <= maxLength) return value;
-  return `${value.slice(0, maxLength)}\n…[truncated]`;
+async function approveToolCall(
+  toolCall: ToolCall,
+  tool: ToolDefinition,
+  callbacks: AgentRunCallbacks,
+  autoApprove: boolean,
+): Promise<'approve' | 'deny'> {
+  if (autoApprove || !isMutatingTool(tool.name) || !callbacks.approveToolCall) {
+    return 'approve';
+  }
+  const decision = await callbacks.approveToolCall(toolCall, tool);
+  return decision === 'deny' ? 'deny' : 'approve';
+}
+
+function isMutatingTool(toolName: string): boolean {
+  return toolName === 'write_file' || toolName === 'edit_file' || toolName === 'run_shell';
+}
+
+function emit(callbacks: AgentRunCallbacks, event: AgentEvent): void {
+  callbacks.onEvent?.(event);
 }

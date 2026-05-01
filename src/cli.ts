@@ -2,14 +2,14 @@
 import { input } from '@inquirer/prompts';
 import chalk from 'chalk';
 import { Command } from 'commander';
-import { CodingAgent } from './agent/agent.js';
+import { runConsoleAgent } from './agent/console-runner.js';
 import { configureInteractively } from './config/interactive.js';
 import { DEFAULT_MAX_TOKENS, DEFAULT_TEMPERATURE, SUPPORTED_MODELS } from './constants.js';
 import { loadConfig, tokenPlanBaseUrl } from './config/config.js';
 import { defaultTools } from './tools/index.js';
 import type { ApiFormat, PersistedConfig } from './types.js';
 import { errorMessage } from './utils/errors.js';
-import { printBanner, printUsage } from './ui/banner.js';
+import { runTui } from './ui/tui.js';
 
 const program = new Command();
 
@@ -27,9 +27,9 @@ program
   .option('--dry-run', 'show writes and commands without changing files', false)
   .option('-y, --yes', 'auto-approve tool calls where possible', false)
   .option('--max-iterations <number>', 'maximum agent/tool loop iterations (default 12)')
+  .option('--no-tui', 'use prompt-based console mode instead of the full TUI')
   .action(async (options) => {
-    const task = await input({ message: 'What should MiMo Code do?' });
-    await runTask(task, options);
+    await runInteractive(options);
   });
 
 program
@@ -80,15 +80,35 @@ async function runTask(task: string, options: CliOptions): Promise<void> {
     const cwd = options.cwd ?? process.cwd();
     const overrides = parseOverrides(options);
     const config = await loadConfig(cwd, overrides);
-    printBanner(config, cwd);
-    const agent = new CodingAgent(config, defaultTools, {
+    await runConsoleAgent(task, config, defaultTools, {
       cwd,
       dryRun: Boolean(options.dryRun),
       autoApprove: Boolean(options.yes),
       maxIterations: parsePositiveInteger(options.maxIterations ?? '12', '--max-iterations'),
     });
-    const result = await agent.run(task);
-    printUsage(result.usage);
+  } catch (error) {
+    console.error(chalk.red(errorMessage(error)));
+    process.exitCode = 1;
+  }
+}
+
+async function runInteractive(options: CliOptions): Promise<void> {
+  try {
+    const cwd = options.cwd ?? process.cwd();
+    const overrides = parseOverrides(options);
+    const config = await loadConfig(cwd, overrides);
+    const agentOptions = {
+      cwd,
+      dryRun: Boolean(options.dryRun),
+      autoApprove: Boolean(options.yes),
+      maxIterations: parsePositiveInteger(options.maxIterations ?? '12', '--max-iterations'),
+    };
+    if (options.tui === false) {
+      const task = await input({ message: 'What should MiMo Code do?' });
+      await runConsoleAgent(task, config, defaultTools, agentOptions);
+      return;
+    }
+    await runTui(config, defaultTools, agentOptions);
   } catch (error) {
     console.error(chalk.red(errorMessage(error)));
     process.exitCode = 1;
@@ -133,6 +153,7 @@ interface CliOptions {
   dryRun?: boolean;
   yes?: boolean;
   maxIterations?: string;
+  tui?: boolean;
 }
 
 await program.parseAsync();

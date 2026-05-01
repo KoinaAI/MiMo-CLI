@@ -74,3 +74,18 @@ export interface ToolDefinition {
   inputSchema: Record<string, unknown>;
   run(input: Record<string, unknown>, context: ToolContext): Promise<string>;
 }
+
+export type AgentEvent =
+  | { type: 'thinking'; iteration: number; maxIterations: number }
+  | { type: 'assistant_message'; content: string }
+  | { type: 'tool_call'; id: string; name: string; input: Record<string, unknown> }
+  | { type: 'tool_result'; id: string; name: string; content: string }
+  | { type: 'error'; message: string }
+  | { type: 'done'; result: AgentResult };
+
+export type ToolApprovalDecision = 'approve' | 'deny' | 'always';
+
+export interface AgentRunCallbacks {
+  onEvent?(event: AgentEvent): void;
+  approveToolCall?(toolCall: ToolCall, tool: ToolDefinition): Promise<ToolApprovalDecision>;
+}
