@@ -6,7 +6,9 @@ import {
   DEFAULT_MAX_TOKENS,
   DEFAULT_MODEL,
   DEFAULT_TEMPERATURE,
+  MODEL_MAX_OUTPUT_TOKENS,
   PROJECT_CONFIG_FILE,
+  SUPPORTED_MODELS,
   TOKEN_PLAN_REGIONS,
   USER_CONFIG_DIR,
   USER_CONFIG_FILE,
@@ -67,14 +69,19 @@ export async function loadConfig(cwd: string, overrides: PersistedConfig = {}): 
     );
   }
 
+  const model = merged.model ?? DEFAULT_MODEL;
+  const maxTokens = clampMaxTokens(model, merged.maxTokens ?? DEFAULT_MAX_TOKENS);
+
   return {
     apiKey,
     baseUrl: stripTrailingSlash(merged.baseUrl ?? DEFAULT_BASE_URL),
-    model: merged.model ?? DEFAULT_MODEL,
+    model,
     format: normalizeFormat(merged.format ?? 'openai'),
-    maxTokens: merged.maxTokens ?? DEFAULT_MAX_TOKENS,
+    maxTokens,
     temperature: merged.temperature ?? DEFAULT_TEMPERATURE,
     ...(merged.systemPrompt ? { systemPrompt: merged.systemPrompt } : {}),
+    ...(merged.mcpServers ? { mcpServers: merged.mcpServers } : {}),
+    ...(merged.skills ? { skills: merged.skills } : {}),
   };
 }
 
@@ -114,7 +121,22 @@ export function parsePersistedConfig(value: unknown, source: string): PersistedC
   if (temperature !== undefined) config.temperature = temperature;
   const systemPrompt = optionalString(value.systemPrompt, 'systemPrompt');
   if (systemPrompt) config.systemPrompt = systemPrompt;
+  const mcpServers = parseMcpServers(value.mcpServers);
+  if (mcpServers) config.mcpServers = mcpServers;
+  const skills = parseSkills(value.skills);
+  if (skills) config.skills = skills;
   return config;
+}
+
+export function maxOutputTokensForModel(model: string): number {
+  if (SUPPORTED_MODELS.includes(model as (typeof SUPPORTED_MODELS)[number])) {
+    return MODEL_MAX_OUTPUT_TOKENS[model as keyof typeof MODEL_MAX_OUTPUT_TOKENS];
+  }
+  return 131_072;
+}
+
+export function clampMaxTokens(model: string, maxTokens: number): number {
+  return Math.min(Math.max(1, Math.floor(maxTokens)), maxOutputTokensForModel(model));
 }
 
 function normalizeFormat(format: string): ApiFormat {
@@ -126,4 +148,61 @@ function normalizeFormat(format: string): ApiFormat {
 
 function stripTrailingSlash(value: string): string {
   return value.replace(/\/+$/, '');
+}
+
+function parseMcpServers(value: unknown): PersistedConfig['mcpServers'] {
+  if (value === undefined || value === null) return undefined;
+  if (!Array.isArray(value)) throw new MiMoCliError('Field "mcpServers" must be an array');
+  return value.map((entry, index) => {
+    if (!isRecord(entry)) throw new MiMoCliError(`mcpServers[${index}] must be an object`);
+    const name = optionalString(entry.name, 'name');
+    const command = optionalString(entry.command, 'command');
+    if (!name || !command) throw new MiMoCliError(`mcpServers[${index}] requires name and command`);
+    const args = parseStringArray(entry.args, `mcpServers[${index}].args`);
+    const env = parseStringRecord(entry.env, `mcpServers[${index}].env`);
+    return {
+      name,
+      command,
+      ...(args ? { args } : {}),
+      ...(env ? { env } : {}),
+      ...(typeof entry.enabled === 'boolean' ? { enabled: entry.enabled } : {}),
+    };
+  });
+}
+
+function parseSkills(value: unknown): PersistedConfig['skills'] {
+  if (value === undefined || value === null) return undefined;
+  if (!Array.isArray(value)) throw new MiMoCliError('Field "skills" must be an array');
+  return value.map((entry, index) => {
+    if (!isRecord(entry)) throw new MiMoCliError(`skills[${index}] must be an object`);
+    const name = optionalString(entry.name, 'name');
+    if (!name) throw new MiMoCliError(`skills[${index}] requires name`);
+    const skillPath = optionalString(entry.path, 'path');
+    const description = optionalString(entry.description, 'description');
+    return {
+      name,
+      ...(skillPath ? { path: skillPath } : {}),
+      ...(description ? { description } : {}),
+      ...(typeof entry.enabled === 'boolean' ? { enabled: entry.enabled } : {}),
+    };
+  });
+}
+
+function parseStringArray(value: unknown, key: string): string[] | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (!Array.isArray(value) || value.some((item) => typeof item !== 'string')) {
+    throw new MiMoCliError(`Field "${key}" must be a string array`);
+  }
+  return value;
+}
+
+function parseStringRecord(value: unknown, key: string): Record<string, string> | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (!isRecord(value)) throw new MiMoCliError(`Field "${key}" must be an object`);
+  const output: Record<string, string> = {};
+  for (const [recordKey, recordValue] of Object.entries(value)) {
+    if (typeof recordValue !== 'string') throw new MiMoCliError(`Field "${key}.${recordKey}" must be a string`);
+    output[recordKey] = recordValue;
+  }
+  return output;
 }

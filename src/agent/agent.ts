@@ -19,18 +19,20 @@ export class CodingAgent {
   private readonly systemPrompt: string;
 
   constructor(
-    config: RuntimeConfig,
+    private readonly config: RuntimeConfig,
     private readonly tools: ToolDefinition[],
     private readonly options: AgentOptions,
   ) {
-    this.systemPrompt = config.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
-    this.client = new MiMoClient({ ...config, systemPrompt: this.systemPrompt });
+    this.systemPrompt = this.config.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
+    this.client = new MiMoClient({ ...this.config, systemPrompt: this.systemPrompt });
   }
 
-  async run(task: string, callbacks: AgentRunCallbacks = {}): Promise<AgentResult> {
+  async run(task: string, callbacks: AgentRunCallbacks = {}, history: ChatMessage[] = []): Promise<AgentResult> {
     const systemPrompt = this.systemPrompt;
     const messages: ChatMessage[] = [
       { role: 'system', content: systemPrompt },
+      ...contextMessages(this.config),
+      ...history,
       { role: 'user', content: task },
     ];
     let finalMessage = '';
@@ -83,6 +85,18 @@ export class CodingAgent {
     emit(callbacks, { type: 'done', result });
     return result;
   }
+
+}
+
+function contextMessages(config: RuntimeConfig): ChatMessage[] {
+  const context: string[] = [];
+  if (config.mcpServers && config.mcpServers.length > 0) {
+    context.push(`Configured MCP servers:\\n${JSON.stringify(config.mcpServers.filter((server) => server.enabled !== false), null, 2)}`);
+  }
+  if (config.skills && config.skills.length > 0) {
+    context.push(`Configured skills:\\n${JSON.stringify(config.skills.filter((skill) => skill.enabled !== false), null, 2)}`);
+  }
+  return context.length > 0 ? [{ role: 'system', content: context.join('\\n\\n') }] : [];
 }
 
 async function approveToolCall(
