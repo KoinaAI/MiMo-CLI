@@ -1,0 +1,62 @@
+import { describe, expect, it } from 'vitest';
+import { envToConfig, parsePersistedConfig, tokenPlanBaseUrl } from '../src/config/config.js';
+
+it('builds token plan base URLs', () => {
+  expect(tokenPlanBaseUrl('cn')).toBe('https://token-plan-cn.xiaomimimo.com');
+  expect(tokenPlanBaseUrl('sgp')).toBe('https://token-plan-sgp.xiaomimimo.com');
+  expect(tokenPlanBaseUrl('ams')).toBe('https://token-plan-ams.xiaomimimo.com');
+});
+
+describe('envToConfig', () => {
+  it('reads MiMo environment variables first', () => {
+    expect(
+      envToConfig({
+        MIMO_API_KEY: 'mimo-key',
+        OPENAI_API_KEY: 'openai-key',
+        MIMO_BASE_URL: 'https://example.test',
+        MIMO_MODEL: 'mimo-v2.5',
+        MIMO_API_FORMAT: 'anthropic',
+        MIMO_MAX_TOKENS: '123',
+        MIMO_TEMPERATURE: '0.2',
+      }),
+    ).toEqual({
+      apiKey: 'mimo-key',
+      baseUrl: 'https://example.test',
+      model: 'mimo-v2.5',
+      format: 'anthropic',
+      maxTokens: 123,
+      temperature: 0.2,
+    });
+  });
+});
+
+describe('parsePersistedConfig', () => {
+  it('accepts valid persisted config', () => {
+    expect(
+      parsePersistedConfig(
+        {
+          apiKey: 'key',
+          baseUrl: 'https://api.xiaomimimo.com',
+          model: 'mimo-v2.5-pro',
+          format: 'openai',
+          maxTokens: 4096,
+          temperature: 0,
+          systemPrompt: 'custom',
+        },
+        'test',
+      ),
+    ).toEqual({
+      apiKey: 'key',
+      baseUrl: 'https://api.xiaomimimo.com',
+      model: 'mimo-v2.5-pro',
+      format: 'openai',
+      maxTokens: 4096,
+      temperature: 0,
+      systemPrompt: 'custom',
+    });
+  });
+
+  it('rejects invalid format', () => {
+    expect(() => parsePersistedConfig({ format: 'bad' }, 'test')).toThrow(/Unsupported API format/);
+  });
+});
