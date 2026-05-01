@@ -1,2 +1,1 @@
-# MimoCLI
-Coding Agent for Xiaomi Mimo
+# MiMo Code CLI
