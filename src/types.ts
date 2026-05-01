@@ -37,6 +37,8 @@ export interface RuntimeConfig {
   maxTokens: number;
   temperature: number;
   systemPrompt?: string;
+  mcpServers?: McpServerConfig[];
+  skills?: SkillConfig[];
 }
 
 export interface PersistedConfig {
@@ -47,6 +49,8 @@ export interface PersistedConfig {
   maxTokens?: number;
   temperature?: number;
   systemPrompt?: string;
+  mcpServers?: McpServerConfig[];
+  skills?: SkillConfig[];
 }
 
 export interface AgentOptions {
@@ -88,4 +92,28 @@ export type ToolApprovalDecision = 'approve' | 'deny' | 'always';
 export interface AgentRunCallbacks {
   onEvent?(event: AgentEvent): void;
   approveToolCall?(toolCall: ToolCall, tool: ToolDefinition): Promise<ToolApprovalDecision>;
+}
+
+export interface McpServerConfig {
+  name: string;
+  command: string;
+  args?: string[];
+  env?: Record<string, string>;
+  enabled?: boolean;
+}
+
+export interface SkillConfig {
+  name: string;
+  path?: string;
+  description?: string;
+  enabled?: boolean;
+}
+
+export interface SessionRecord {
+  id: string;
+  title: string;
+  cwd: string;
+  createdAt: string;
+  updatedAt: string;
+  messages: ChatMessage[];
 }
