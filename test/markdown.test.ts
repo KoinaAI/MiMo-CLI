@@ -58,4 +58,13 @@ describe('markdown renderer', () => {
     const result = renderMarkdown(md);
     expect(result).toContain('const x = 1;');
   });
+
+  it('renders markdown tables as terminal tables', () => {
+    const md = '| Name | Status |\n| --- | --- |\n| TUI | fixed |';
+    const result = renderMarkdown(md);
+    expect(result).toContain('┌');
+    expect(result).toContain('Name');
+    expect(result).toContain('fixed');
+    expect(result).not.toContain('| --- |');
+  });
 });

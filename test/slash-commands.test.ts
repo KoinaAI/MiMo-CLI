@@ -5,6 +5,8 @@ describe('parseSlashCommand', () => {
   it('parses known slash commands', () => {
     expect(parseSlashCommand('/load abc')).toEqual({ name: 'load', args: ['abc'] });
     expect(parseSlashCommand('/new sprint 1')).toEqual({ name: 'new', args: ['sprint', '1'] });
+    expect(parseSlashCommand('/settings')).toEqual({ name: 'settings', args: [] });
+    expect(parseSlashCommand('/model mimo-v2.5')).toEqual({ name: 'model', args: ['mimo-v2.5'] });
   });
 
   it('ignores normal prompts and unknown commands', () => {

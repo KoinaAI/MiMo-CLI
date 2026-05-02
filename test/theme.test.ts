@@ -26,7 +26,8 @@ const tools: ToolDefinition[] = [
 
 describe('theme', () => {
   it('SPLASH contains branding text', () => {
-    expect(SPLASH).toContain('Intelligent Coding Agent');
+    expect(SPLASH).toContain('M I M O');
+    expect(SPLASH).toContain('Code CLI');
   });
 
   it('MODE_LABELS has all three modes', () => {

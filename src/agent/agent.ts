@@ -76,9 +76,13 @@ export class CodingAgent {
       }
       emit(callbacks, { type: 'thinking', iteration, maxIterations: this.options.maxIterations });
 
+      let streamedThinking = false;
       const response = await this.client.completeStreaming(messages, activeTools, {
         onDelta: (delta) => emit(callbacks, { type: 'streaming_delta', content: delta }),
-        onThinking: (text) => emit(callbacks, { type: 'assistant_thinking', content: text }),
+        onThinking: (text) => {
+          streamedThinking = true;
+          emit(callbacks, { type: 'assistant_thinking', content: text });
+        },
       }).catch((error: unknown) => {
         const message = errorMessage(error);
         emit(callbacks, { type: 'error', message });
@@ -86,7 +90,7 @@ export class CodingAgent {
       });
       usage = mergeUsage(usage, response.rawUsage);
 
-      if (response.thinking) {
+      if (response.thinking && !streamedThinking) {
         emit(callbacks, { type: 'assistant_thinking', content: response.thinking });
       }
 

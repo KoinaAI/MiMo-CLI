@@ -65,7 +65,7 @@ export async function loadConfig(cwd: string, overrides: PersistedConfig = {}): 
   const apiKey = merged.apiKey;
   if (!apiKey) {
     throw new MiMoCliError(
-      'Missing API key. Run `mimo-code config` or set MIMO_API_KEY / OPENAI_API_KEY / ANTHROPIC_API_KEY.',
+      'Missing API key. Run `mimo-code settings` or set MIMO_API_KEY / OPENAI_API_KEY / ANTHROPIC_API_KEY.',
     );
   }
 

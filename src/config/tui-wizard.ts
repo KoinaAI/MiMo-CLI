@@ -47,23 +47,23 @@ export async function createConfigWizardState(): Promise<ConfigWizardState> {
 export function wizardPrompt(state: ConfigWizardState): string {
   switch (state.step) {
     case 'apiKey':
-      return 'MiMo API Key（输入 . 跳过并保留现有值）';
+      return 'API key for this launch（输入 . 跳过，不写入配置文件）';
     case 'baseUrlType':
-      return 'Base URL 类型：api / token / custom';
+      return 'Provider：api / token / custom';
     case 'tokenRegion':
       return 'Token Plan region：cn / sgp / ams';
     case 'customBaseUrl':
       return 'Custom base URL';
     case 'format':
-      return 'API format：openai / anthropic';
+      return 'Wire format：openai / anthropic';
     case 'model':
       return `Model：${SUPPORTED_MODELS.join(' / ')}`;
     case 'maxTokens':
-      return 'Max output tokens（留空使用模型上限）';
+      return 'Max output tokens（留空自动）';
     case 'temperature':
       return 'Temperature';
     case 'systemPrompt':
-      return 'Custom system prompt（留空跳过）';
+      return 'Instructions（留空跳过）';
     case 'mcpServers':
       return 'MCP servers JSON array（留空跳过）';
     case 'skills':
@@ -71,23 +71,34 @@ export function wizardPrompt(state: ConfigWizardState): string {
     case 'hooks':
       return 'Hooks JSON array（留空跳过）';
     case 'review':
-      return '输入 save 保存，back 返回，cancel 取消';
+      return '输入 save 保存 settings，back 返回，cancel 取消';
   }
 }
 
 export function wizardSummary(state: ConfigWizardState): string {
-  const safeDraft = { ...state.draft, apiKey: state.draft.apiKey ? '***' : state.existing.apiKey ? '(keep existing)' : '(not set)' };
-  return JSON.stringify(safeDraft, null, 2);
+  const lines = [
+    `Provider URL: ${state.draft.baseUrl ?? '(default)'}`,
+    `Format: ${state.draft.format ?? 'openai'}`,
+    `Model: ${state.draft.model ?? DEFAULT_MODEL}`,
+    `Max tokens: ${state.draft.maxTokens ?? 'auto'}`,
+    `Temperature: ${state.draft.temperature ?? DEFAULT_TEMPERATURE}`,
+    `Instructions: ${state.draft.systemPrompt ? 'custom' : 'default'}`,
+    `MCP servers: ${state.draft.mcpServers?.length ?? 0}`,
+    `Skills: ${state.draft.skills?.length ?? 0}`,
+    `Hooks: ${state.draft.hooks?.length ?? 0}`,
+    'API key: runtime only, not saved',
+  ];
+  return lines.join('\n');
 }
 
 export function updateWizard(state: ConfigWizardState, rawInput: string): ConfigWizardState {
   const input = rawInput.trim();
-  if (input === 'cancel') return { ...state, step: 'review', error: 'Cancelled. Type /config to restart.' };
+  if (input === 'cancel') return { ...state, step: 'review', error: 'Cancelled. Type /settings to restart.' };
   if (input === 'back') return { ...state, step: previousStep(state.step), error: undefined };
 
   try {
     if (state.step === 'apiKey') {
-      return next(state, 'baseUrlType', input && input !== '.' ? { apiKey: input } : {});
+      return next(state, 'baseUrlType', {});
     }
     if (state.step === 'baseUrlType') {
       if (input === 'api' || input === '') return next(state, 'format', { baseUrl: DEFAULT_BASE_URL });
@@ -141,8 +152,16 @@ export function updateWizard(state: ConfigWizardState, rawInput: string): Config
 }
 
 export async function saveWizardConfig(state: ConfigWizardState): Promise<string> {
-  const config = { ...state.existing, ...state.draft };
+  const draftWithoutKey = omitApiKey(state.draft);
+  const existingWithoutKey = omitApiKey(state.existing);
+  const config = { ...existingWithoutKey, ...draftWithoutKey };
   return writeUserConfig(config);
+}
+
+function omitApiKey(config: PersistedConfig): PersistedConfig {
+  const copy = { ...config };
+  delete copy.apiKey;
+  return copy;
 }
 
 function next(state: ConfigWizardState, step: ConfigWizardStep, patch: PersistedConfig): ConfigWizardState {

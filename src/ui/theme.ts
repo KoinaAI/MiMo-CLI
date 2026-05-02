@@ -8,12 +8,9 @@ import type { CostEstimate, InteractionMode, RuntimeConfig, SessionRecord, ToolD
  * branding tagline `Intelligent Coding Agent` is asserted by tests.
  */
 export const SPLASH = [
-  chalk.cyan('  ╭────────────────────────────────────────╮'),
-  chalk.cyan('  │  ') + chalk.bold.white('M I M O') + chalk.cyan('  ') + chalk.gray('Code · terminal coding agent') + chalk.cyan('  │'),
-  chalk.cyan('  │  ') + chalk.dim('Intelligent Coding Agent') + chalk.cyan('              │'),
-  chalk.cyan('  ╰────────────────────────────────────────╯'),
-  '',
-  chalk.gray('  /help commands · /keys shortcuts · /workflow overview · @file attach · Esc exit'),
+  chalk.cyan('  ╭────────────────────────────╮'),
+  chalk.cyan('  │  ') + chalk.bold.white('M I M O') + chalk.cyan('  ') + chalk.gray('Code CLI') + chalk.cyan('        │'),
+  chalk.cyan('  ╰────────────────────────────╯'),
   '',
 ].join('\n');
 

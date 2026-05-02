@@ -26,7 +26,8 @@ export function renderMarkdown(text: string): string {
     output.push(chalk.dim('  └' + '─'.repeat(36)));
   };
 
-  for (const line of lines) {
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+    const line = lines[lineIndex] ?? '';
     // Code block toggle
     if (line.trimStart().startsWith('```')) {
       if (!inCodeBlock) {
@@ -44,6 +45,19 @@ export function renderMarkdown(text: string): string {
 
     if (inCodeBlock) {
       codeLines.push(line);
+      continue;
+    }
+
+    const nextLine = lines[lineIndex + 1] ?? '';
+    if (isTableRow(line) && isTableSeparator(nextLine)) {
+      const tableLines = [line, nextLine];
+      lineIndex += 2;
+      while (lineIndex < lines.length && isTableRow(lines[lineIndex] ?? '')) {
+        tableLines.push(lines[lineIndex] ?? '');
+        lineIndex += 1;
+      }
+      lineIndex -= 1;
+      output.push(...renderTable(tableLines));
       continue;
     }
 
@@ -133,4 +147,58 @@ function renderInline(text: string): string {
   });
 
   return result;
+}
+
+function isTableRow(line: string): boolean {
+  const trimmed = line.trim();
+  return trimmed.startsWith('|') && trimmed.endsWith('|') && trimmed.slice(1, -1).includes('|');
+}
+
+function isTableSeparator(line: string): boolean {
+  if (!isTableRow(line)) return false;
+  return splitTableRow(line).every((cell) => /^:?-{3,}:?$/.test(cell.trim()));
+}
+
+function splitTableRow(line: string): string[] {
+  return line.trim().slice(1, -1).split('|').map((cell) => cell.trim());
+}
+
+function renderTable(lines: string[]): string[] {
+  if (lines.length < 2) return lines.map((line) => `  ${renderInline(line)}`);
+  const header = splitTableRow(lines[0] ?? '');
+  const rows = lines.slice(2).map(splitTableRow);
+  const columnCount = Math.max(header.length, ...rows.map((row) => row.length));
+  const widths = Array.from({ length: columnCount }, (_, index) => {
+    const values = [header[index] ?? '', ...rows.map((row) => row[index] ?? '')];
+    return Math.min(36, Math.max(3, ...values.map((value) => visibleLength(value))));
+  });
+  const separator = `  ${chalk.dim('┌')}${widths.map((width) => chalk.dim('─'.repeat(width + 2))).join(chalk.dim('┬'))}${chalk.dim('┐')}`;
+  const divider = `  ${chalk.dim('├')}${widths.map((width) => chalk.dim('─'.repeat(width + 2))).join(chalk.dim('┼'))}${chalk.dim('┤')}`;
+  const bottom = `  ${chalk.dim('└')}${widths.map((width) => chalk.dim('─'.repeat(width + 2))).join(chalk.dim('┴'))}${chalk.dim('┘')}`;
+  return [
+    separator,
+    renderTableRow(header, widths, true),
+    divider,
+    ...rows.map((row) => renderTableRow(row, widths, false)),
+    bottom,
+  ];
+}
+
+function renderTableRow(row: string[], widths: number[], header: boolean): string {
+  const cells = widths.map((width, index) => {
+    const value = truncateCell(row[index] ?? '', width);
+    const padded = value.padEnd(width);
+    return ` ${header ? chalk.bold(renderInline(padded)) : renderInline(padded)} `;
+  });
+  return `  ${chalk.dim('│')}${cells.join(chalk.dim('│'))}${chalk.dim('│')}`;
+}
+
+function truncateCell(value: string, width: number): string {
+  if (visibleLength(value) <= width) return value;
+  return `${value.slice(0, Math.max(0, width - 1))}…`;
+}
+
+function visibleLength(value: string): number {
+  // eslint-disable-next-line no-control-regex
+  return value.replace(/\x1b\[[0-9;]*m/g, '').length;
 }
