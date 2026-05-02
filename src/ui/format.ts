@@ -17,6 +17,10 @@ export function eventLabel(event: AgentEvent): string {
       return `Thinking ${event.iteration}/${event.maxIterations}`;
     case 'assistant_message':
       return 'MiMo';
+    case 'assistant_thinking':
+      return 'Thinking';
+    case 'streaming_delta':
+      return 'Streaming';
     case 'tool_call':
       return `Tool ${event.name}`;
     case 'tool_result':

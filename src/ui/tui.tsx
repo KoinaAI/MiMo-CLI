@@ -3,13 +3,21 @@ import { Box, Newline, render, Text, useApp, useInput } from 'ink';
 import TextInput from 'ink-text-input';
 import Spinner from 'ink-spinner';
 import SelectInput from 'ink-select-input';
+import { execSync } from 'node:child_process';
 import { CodingAgent } from '../agent/agent.js';
+import { formatCost } from '../agent/usage.js';
+import { compactMessages, formatContextStats } from '../context/compaction.js';
+import { runDiagnostics, formatDiagnostics } from '../doctor/checks.js';
+import { addMemoryNote, listMemoryNotes } from '../memory/store.js';
 import { createConfigWizardState, saveWizardConfig, updateWizard, wizardPrompt, wizardSummary } from '../config/tui-wizard.js';
 import { createSession, listSessions, readSession, saveSession } from '../session/store.js';
+import { getTodoStore } from '../tools/todo.js';
 import type {
   AgentEvent,
   AgentOptions,
   ChatMessage,
+  CostEstimate,
+  InteractionMode,
   RuntimeConfig,
   SessionRecord,
   ToolApprovalDecision,
@@ -20,13 +28,14 @@ import type {
 import { errorMessage } from '../utils/errors.js';
 import { completeSlashCommand, parseSlashCommand, slashCommandSuggestions, SLASH_COMMAND_HELP } from './commands.js';
 import { eventLabel, summarizeToolInput, summarizeToolOutput } from './format.js';
-import { SPLASH, statusLine } from './theme.js';
+import { SPLASH, statusLine, modeIndicator, formatDiffOutput, formatThinkingBlock } from './theme.js';
 
 interface TuiMessage {
   id: number;
-  kind: 'system' | 'user' | 'assistant' | 'tool' | 'error';
+  kind: 'system' | 'user' | 'assistant' | 'tool' | 'error' | 'thinking' | 'diff';
   title: string;
   body: string;
+  collapsed?: boolean;
 }
 
 interface PendingApproval {
@@ -55,22 +64,31 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
       id: 1,
       kind: 'system',
       title: 'Welcome',
-      body: `${SPLASH}\nClaude-style TUI · Type /help for commands · Tab completes slash commands`,
+      body: `${SPLASH}\nType /help for commands · Tab completes slash commands · /mode to switch modes`,
     },
   ]);
   const [prompt, setPrompt] = useState('');
   const [running, setRunning] = useState(false);
   const [approval, setApproval] = useState<PendingApproval | undefined>();
   const [usage, setUsage] = useState<TokenUsage>({});
+  const [sessionCost, setSessionCost] = useState<CostEstimate | undefined>();
   const [alwaysApprove, setAlwaysApprove] = useState(options.autoApprove);
   const [session, setSession] = useState<SessionRecord>(() => createSession('Untitled session', options.cwd));
   const [wizard, setWizard] = useState<ConfigWizard | undefined>();
+  const [mode, setMode] = useState<InteractionMode>(options.mode ?? 'agent');
+  const [streamingText, setStreamingText] = useState('');
   const alwaysApproveRef = useRef(options.autoApprove);
 
-  const agent = useMemo(() => new CodingAgent(config, tools, options), [config, options, tools]);
+  const currentOptions = useMemo<AgentOptions>(() => ({
+    ...options,
+    mode,
+    autoApprove: mode === 'yolo' || alwaysApprove,
+  }), [options, mode, alwaysApprove]);
+
+  const agent = useMemo(() => new CodingAgent(config, tools, currentOptions), [config, currentOptions, tools]);
 
   const append = useCallback((message: Omit<TuiMessage, 'id'>) => {
-    setMessages((current) => [...current.slice(-160), { ...message, id: Date.now() + Math.random() }]);
+    setMessages((current) => [...current.slice(-200), { ...message, id: Date.now() + Math.random() }]);
   }, []);
 
   const addSessionMessages = useCallback((newMessages: ChatMessage[]) => {
@@ -81,34 +99,42 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
     (event: AgentEvent) => {
       if (event.type === 'thinking') {
         append({ kind: 'system', title: eventLabel(event), body: 'Waiting for MiMo response…' });
+      } else if (event.type === 'assistant_thinking') {
+        append({ kind: 'thinking', title: 'Thinking', body: formatThinkingBlock(event.content) });
+      } else if (event.type === 'streaming_delta') {
+        setStreamingText((current) => current + event.content);
       } else if (event.type === 'assistant_message') {
+        setStreamingText('');
         append({ kind: 'assistant', title: 'MiMo', body: event.content });
         addSessionMessages([{ role: 'assistant', content: event.content }]);
       } else if (event.type === 'tool_call') {
-        append({ kind: 'tool', title: `⏺ ${event.name}`, body: summarizeToolInput(event.input) });
+        append({ kind: 'tool', title: `⚡ ${event.name}`, body: summarizeToolInput(event.input), collapsed: false });
       } else if (event.type === 'tool_result') {
-        append({ kind: 'tool', title: `⎿ ${event.name}`, body: summarizeToolOutput(event.content) });
+        append({ kind: 'tool', title: `← ${event.name}`, body: summarizeToolOutput(event.content), collapsed: true });
       } else if (event.type === 'error') {
         append({ kind: 'error', title: 'Error', body: event.message });
       } else if (event.type === 'done') {
         setUsage(event.result.usage);
-        append({ kind: 'system', title: 'Done', body: `Iterations: ${event.result.iterations}` });
+        if (event.result.cost) setSessionCost(event.result.cost);
+        const costStr = formatCost(event.result.cost);
+        append({ kind: 'system', title: 'Done', body: `Iterations: ${event.result.iterations}${costStr ? ` · Cost: ${costStr}` : ''}` });
       }
     },
     [addSessionMessages, append],
   );
 
   const approveToolCall = useCallback(async (toolCall: ToolCall, tool: ToolDefinition): Promise<ToolApprovalDecision> => {
-    if (alwaysApproveRef.current) return 'approve';
+    if (alwaysApproveRef.current || mode === 'yolo') return 'approve';
     return new Promise((resolve) => {
       setApproval({ toolCall, tool, resolve });
     });
-  }, []);
+  }, [mode]);
 
   const handleSlashCommand = useCallback(
     (value: string): boolean => {
       const command = parseSlashCommand(value);
       if (!command) return false;
+
       if (command.name === 'help') append({ kind: 'system', title: 'Slash commands', body: SLASH_COMMAND_HELP });
       if (command.name === 'exit') exit();
       if (command.name === 'clear') setMessages([]);
@@ -135,11 +161,96 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
       if (command.name === 'mcp') append({ kind: 'system', title: 'MCP servers', body: JSON.stringify(config.mcpServers ?? [], null, 2) });
       if (command.name === 'skill') append({ kind: 'system', title: 'Skills', body: JSON.stringify(config.skills ?? [], null, 2) });
       if (command.name === 'hooks') append({ kind: 'system', title: 'Hooks', body: JSON.stringify(config.hooks ?? [], null, 2) });
-      if (command.name === 'tools') append({ kind: 'system', title: 'Tools', body: tools.map((tool) => `${tool.name} — ${tool.description}`).join('\n') });
-      if (command.name === 'status') append({ kind: 'system', title: 'Status', body: statusLine(config, session, tools, usage, options.cwd) });
+      if (command.name === 'tools') append({ kind: 'system', title: 'Tools', body: tools.map((tool) => `${tool.name}${tool.readOnly ? ' (read-only)' : ''} — ${tool.description}`).join('\n') });
+      if (command.name === 'status') append({ kind: 'system', title: 'Status', body: statusLine(config, session, tools, usage, options.cwd, mode, sessionCost) });
+
+      if (command.name === 'mode') {
+        const target = command.args[0];
+        if (target === 'plan' || target === 'agent' || target === 'yolo') {
+          setMode(target);
+          if (target === 'yolo') alwaysApproveRef.current = true;
+          append({ kind: 'system', title: 'Mode', body: `Switched to ${modeIndicator(target)}` });
+        } else {
+          append({ kind: 'system', title: 'Mode', body: `Current: ${modeIndicator(mode)}\nUsage: /mode [plan|agent|yolo]\n  plan  — Read-only investigation\n  agent — Interactive with approval\n  yolo  — Fully autonomous` });
+        }
+      }
+      if (command.name === 'compact') {
+        setSession((current) => {
+          const compacted = compactMessages(current.messages);
+          append({ kind: 'system', title: 'Compact', body: `Compacted ${current.messages.length} → ${compacted.length} messages` });
+          return { ...current, messages: compacted, updatedAt: new Date().toISOString() };
+        });
+      }
+      if (command.name === 'diff') {
+        try {
+          const diff = execSync('git diff --stat --patch', { cwd: options.cwd, encoding: 'utf8', timeout: 10_000 });
+          append({ kind: 'diff', title: 'Workspace Diff', body: diff ? formatDiffOutput(diff) : 'No changes detected' });
+        } catch {
+          append({ kind: 'error', title: 'Diff', body: 'Not a git repository or git not available' });
+        }
+      }
+      if (command.name === 'doctor') {
+        void runDiagnostics(config, options.cwd)
+          .then((results) => append({ kind: 'system', title: 'Diagnostics', body: formatDiagnostics(results) }))
+          .catch((error: unknown) => append({ kind: 'error', title: 'Doctor', body: errorMessage(error) }));
+      }
+      if (command.name === 'memory') {
+        const note = command.args.join(' ');
+        if (note) {
+          void addMemoryNote(note, options.cwd)
+            .then((mem) => append({ kind: 'system', title: 'Memory', body: `Saved note #${mem.id}: ${note}` }))
+            .catch((error: unknown) => append({ kind: 'error', title: 'Memory', body: errorMessage(error) }));
+        } else {
+          void listMemoryNotes(options.cwd)
+            .then((notes) => {
+              if (notes.length === 0) {
+                append({ kind: 'system', title: 'Memory', body: 'No memory notes. Usage: /memory <note text>' });
+              } else {
+                append({ kind: 'system', title: 'Memory', body: notes.map((n) => `#${n.id} [${n.scope}] ${n.content}`).join('\n') });
+              }
+            })
+            .catch((error: unknown) => append({ kind: 'error', title: 'Memory', body: errorMessage(error) }));
+        }
+      }
+      if (command.name === 'undo') {
+        try {
+          const result = execSync('git checkout -- .', { cwd: options.cwd, encoding: 'utf8', timeout: 10_000 });
+          append({ kind: 'system', title: 'Undo', body: result || 'Reverted all unstaged changes' });
+        } catch {
+          append({ kind: 'error', title: 'Undo', body: 'Failed to revert. Not a git repository or no changes to undo.' });
+        }
+      }
+      if (command.name === 'init') {
+        append({ kind: 'system', title: 'Init', body: 'Use "mimo-code config" or /config to initialize project configuration.' });
+      }
+      if (command.name === 'bug') {
+        const desc = command.args.join(' ');
+        if (desc) {
+          append({ kind: 'system', title: 'Bug Report', body: `Bug recorded: ${desc}\nPlease report at: https://github.com/KoinaAI/MiMo-CLI/issues` });
+        } else {
+          append({ kind: 'error', title: 'Bug', body: 'Usage: /bug <description>' });
+        }
+      }
+      if (command.name === 'context') {
+        append({ kind: 'system', title: 'Context', body: formatContextStats(session.messages) });
+      }
+      if (command.name === 'cost') {
+        const costStr = formatCost(sessionCost);
+        append({ kind: 'system', title: 'Session Cost', body: costStr || 'No cost data yet' });
+      }
+      if (command.name === 'todo') {
+        const todos = getTodoStore();
+        if (todos.length === 0) {
+          append({ kind: 'system', title: 'Todo', body: 'No tasks in checklist. The agent can use todo_add to track tasks.' });
+        } else {
+          const statusIcon = (status: string) => status === 'done' ? '[x]' : status === 'in_progress' ? '[~]' : '[ ]';
+          append({ kind: 'system', title: 'Todo', body: todos.map((t) => `#${t.id} ${statusIcon(t.status)} ${t.text}`).join('\n') });
+        }
+      }
+
       return true;
     },
-    [append, config, exit, options.cwd, session, tools, usage],
+    [append, config, exit, mode, options.cwd, session, sessionCost, tools, usage],
   );
 
   const submit = useCallback(
@@ -153,6 +264,7 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
       }
       if (handleSlashCommand(task)) return;
       setRunning(true);
+      setStreamingText('');
       append({ kind: 'user', title: 'You', body: task });
       const userMessage: ChatMessage = { role: 'user', content: task };
       const history = [...session.messages];
@@ -160,7 +272,7 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
       void agent
         .run(task, { onEvent: handleEvent, approveToolCall }, history)
         .catch((error: unknown) => append({ kind: 'error', title: 'Error', body: errorMessage(error) }))
-        .finally(() => setRunning(false));
+        .finally(() => { setRunning(false); setStreamingText(''); });
     },
     [addSessionMessages, agent, append, approveToolCall, handleEvent, handleSlashCommand, running, session.messages, wizard],
   );
@@ -187,12 +299,18 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
   return (
     <Box flexDirection="column" paddingX={1}>
       <Box flexDirection="column" minHeight={20}>
-        {messages.slice(-20).map((message) => (
+        {messages.slice(-30).map((message) => (
           <MessageView key={message.id} message={message} />
         ))}
-        {running && !approval ? (
+        {streamingText ? (
+          <Box flexDirection="column" marginBottom={1}>
+            <Text color="cyan" bold>✻ MiMo</Text>
+            <Text>{streamingText}</Text>
+          </Box>
+        ) : null}
+        {running && !approval && !streamingText ? (
           <Text color="yellow">
-            <Spinner type="dots" /> Thinking…
+            <Spinner type="dots" /> {mode === 'plan' ? 'Analyzing…' : 'Thinking…'}
           </Text>
         ) : null}
       </Box>
@@ -218,22 +336,22 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
           {suggestions.length > 0 ? (
             <Box flexDirection="column" paddingX={1}>
               {suggestions.map((suggestion) => (
-                <Text key={suggestion.name} dimColor>{suggestion.usage.padEnd(24)} {suggestion.description}</Text>
+                <Text key={suggestion.name} dimColor>{suggestion.usage.padEnd(28)} {suggestion.description}</Text>
               ))}
             </Box>
           ) : null}
           <Box paddingX={1}>
-            <Text color={wizard ? 'yellow' : 'cyan'}>╭─{wizard ? wizardPrompt(wizard) : 'mimo'} </Text>
+            <Text color={wizard ? 'yellow' : modeColor(mode)}>╭─{wizard ? wizardPrompt(wizard) : `${modeIcon(mode)} mimo`} </Text>
             <TextInput value={prompt} onChange={setPrompt} onSubmit={submit} placeholder="message MiMo, /help, Tab complete" />
           </Box>
           <Box paddingX={1}>
-            <Text color={wizard ? 'yellow' : 'cyan'}>╰─ </Text>
-            <Text dimColor>{statusLine(config, session, tools, usage, options.cwd)}{alwaysApprove ? ' · auto-approve' : ''}{options.dryRun ? ' · dry-run' : ''}</Text>
+            <Text color={wizard ? 'yellow' : modeColor(mode)}>╰─ </Text>
+            <Text dimColor>{statusLine(config, session, tools, usage, options.cwd, mode, sessionCost)}{alwaysApprove ? ' · auto-approve' : ''}{options.dryRun ? ' · dry-run' : ''}</Text>
           </Box>
         </Box>
       )}
       {wizard ? <Text color="yellow">{wizard.error ? `Error: ${wizard.error}` : wizard.step === 'review' ? wizardSummary(wizard) : 'back 返回 · cancel 取消 · save 保存'}</Text> : null}
-      <Text dimColor>Enter send · Tab complete · Esc/Ctrl+C quit · /help commands</Text>
+      <Text dimColor>Enter send · Tab complete · Esc/Ctrl+C quit · /help commands · /mode switch</Text>
     </Box>
   );
 }
@@ -291,11 +409,13 @@ function MessageView({ message }: { message: TuiMessage }): React.ReactElement {
   );
 }
 
-function colorForKind(kind: TuiMessage['kind']): 'gray' | 'green' | 'cyan' | 'yellow' | 'red' {
+function colorForKind(kind: TuiMessage['kind']): 'gray' | 'green' | 'cyan' | 'yellow' | 'red' | 'blue' | 'magenta' {
   if (kind === 'system') return 'gray';
   if (kind === 'user') return 'green';
   if (kind === 'assistant') return 'cyan';
   if (kind === 'tool') return 'yellow';
+  if (kind === 'thinking') return 'gray';
+  if (kind === 'diff') return 'magenta';
   return 'red';
 }
 
@@ -304,5 +424,19 @@ function prefixForKind(kind: TuiMessage['kind']): string {
   if (kind === 'assistant') return '✻';
   if (kind === 'tool') return '⏺';
   if (kind === 'error') return '✖';
+  if (kind === 'thinking') return '💭';
+  if (kind === 'diff') return '±';
   return '•';
+}
+
+function modeColor(mode: InteractionMode): 'cyan' | 'blue' | 'red' {
+  if (mode === 'plan') return 'blue';
+  if (mode === 'yolo') return 'red';
+  return 'cyan';
+}
+
+function modeIcon(mode: InteractionMode): string {
+  if (mode === 'plan') return '🔍';
+  if (mode === 'yolo') return '⚡';
+  return '🤖';
 }
