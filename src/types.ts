@@ -8,6 +8,7 @@ export interface ChatMessage {
   name?: string;
   toolCallId?: string;
   toolCalls?: ToolCall[];
+  thinking?: string | undefined;
 }
 
 export interface ToolCall {
@@ -20,6 +21,7 @@ export interface AssistantResponse {
   content: string;
   toolCalls: ToolCall[];
   rawUsage?: TokenUsage | undefined;
+  thinking?: string | undefined;
 }
 
 export interface TokenUsage {
@@ -28,6 +30,8 @@ export interface TokenUsage {
   cacheReadInputTokens?: number;
   cacheCreationInputTokens?: number;
 }
+
+export type InteractionMode = 'plan' | 'agent' | 'yolo';
 
 export interface RuntimeConfig {
   apiKey: string;
@@ -60,30 +64,43 @@ export interface AgentOptions {
   dryRun: boolean;
   maxIterations: number;
   autoApprove: boolean;
+  mode?: InteractionMode | undefined;
 }
 
 export interface AgentResult {
   finalMessage: string;
   iterations: number;
   usage: TokenUsage;
+  cost?: CostEstimate | undefined;
+}
+
+export interface CostEstimate {
+  inputCost: number;
+  outputCost: number;
+  totalCost: number;
+  currency: string;
 }
 
 export interface ToolContext {
   cwd: string;
   dryRun: boolean;
   autoApprove: boolean;
+  mode?: InteractionMode | undefined;
 }
 
 export interface ToolDefinition {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
+  readOnly?: boolean | undefined;
   run(input: Record<string, unknown>, context: ToolContext): Promise<string>;
 }
 
 export type AgentEvent =
   | { type: 'thinking'; iteration: number; maxIterations: number }
   | { type: 'assistant_message'; content: string }
+  | { type: 'assistant_thinking'; content: string }
+  | { type: 'streaming_delta'; content: string }
   | { type: 'tool_call'; id: string; name: string; input: Record<string, unknown> }
   | { type: 'tool_result'; id: string; name: string; content: string }
   | { type: 'error'; message: string }
@@ -138,4 +155,26 @@ export interface HookPayload {
   toolInput?: Record<string, unknown>;
   toolOutput?: string;
   finalMessage?: string;
+}
+
+export interface MemoryNote {
+  id: string;
+  content: string;
+  createdAt: string;
+  scope: 'project' | 'global';
+}
+
+export interface SubAgentConfig {
+  task: string;
+  tools: ToolDefinition[];
+  maxIterations?: number;
+}
+
+export type ExecutionPolicyLevel = 'strict' | 'normal' | 'permissive';
+
+export interface ExecutionPolicy {
+  level: ExecutionPolicyLevel;
+  allowedTools?: string[];
+  blockedTools?: string[];
+  requireApproval?: string[];
 }

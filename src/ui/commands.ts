@@ -11,7 +11,20 @@ export type SlashCommandName =
   | 'tools'
   | 'status'
   | 'clear'
-  | 'exit';
+  | 'exit'
+  | 'compact'
+  | 'diff'
+  | 'doctor'
+  | 'memory'
+  | 'undo'
+  | 'init'
+  | 'bug'
+  | 'context'
+  | 'mode'
+  | 'cost'
+  | 'todo'
+  | 'network'
+  | 'export';
 
 export interface SlashCommandSpec {
   name: SlashCommandName;
@@ -38,9 +51,22 @@ export const SLASH_COMMANDS: SlashCommandSpec[] = [
   { name: 'status', usage: '/status', description: 'Show runtime model/session/status details' },
   { name: 'clear', usage: '/clear', description: 'Clear visible TUI messages' },
   { name: 'exit', usage: '/exit', description: 'Exit TUI' },
+  { name: 'compact', usage: '/compact', description: 'Summarize conversation to reduce context usage' },
+  { name: 'diff', usage: '/diff', description: 'Show workspace git diff since session start' },
+  { name: 'doctor', usage: '/doctor', description: 'Run diagnostic checks on configuration and tools' },
+  { name: 'memory', usage: '/memory [note]', description: 'Add or list persistent memory notes' },
+  { name: 'undo', usage: '/undo', description: 'Undo last file change (git checkout)' },
+  { name: 'init', usage: '/init', description: 'Detect project type and generate .mimo-code.json config' },
+  { name: 'bug', usage: '/bug <description>', description: 'Report a bug or issue' },
+  { name: 'context', usage: '/context', description: 'Show current context window usage' },
+  { name: 'mode', usage: '/mode [plan|agent|yolo]', description: 'Switch interaction mode' },
+  { name: 'cost', usage: '/cost', description: 'Show accumulated cost estimate for this session' },
+  { name: 'todo', usage: '/todo', description: 'Show current task checklist' },
+  { name: 'network', usage: '/network [allow|deny <host>]', description: 'Show or configure network access policy' },
+  { name: 'export', usage: '/export <path>', description: 'Export current session to a JSON file' },
 ];
 
-export const SLASH_COMMAND_HELP = SLASH_COMMANDS.map((command) => `${command.usage.padEnd(28)} ${command.description}`).join('\n');
+export const SLASH_COMMAND_HELP = SLASH_COMMANDS.map((command) => `${command.usage.padEnd(32)} ${command.description}`).join('\n');
 
 export function parseSlashCommand(input: string): SlashCommand | undefined {
   const trimmed = input.trim();

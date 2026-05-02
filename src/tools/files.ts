@@ -8,6 +8,7 @@ import { resolveWorkspacePath } from './paths.js';
 export const listFilesTool: ToolDefinition = {
   name: 'list_files',
   description: 'List files and directories in a workspace directory.',
+  readOnly: true,
   inputSchema: {
     type: 'object',
     properties: {
@@ -35,6 +36,7 @@ export const listFilesTool: ToolDefinition = {
 export const readFileTool: ToolDefinition = {
   name: 'read_file',
   description: 'Read a UTF-8 text file from the workspace.',
+  readOnly: true,
   inputSchema: {
     type: 'object',
     properties: {
