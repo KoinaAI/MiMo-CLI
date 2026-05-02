@@ -1,4 +1,6 @@
 import { MiMoClient } from '../api/client.js';
+import { runHooks } from '../hooks.js';
+import { buildSkillContext } from '../skills/loader.js';
 import type {
   AgentEvent,
   AgentOptions,
@@ -28,10 +30,12 @@ export class CodingAgent {
   }
 
   async run(task: string, callbacks: AgentRunCallbacks = {}, history: ChatMessage[] = []): Promise<AgentResult> {
+    const skillContext = await buildSkillContext(this.config.skills, this.options.cwd);
+    await runHooks(this.config.hooks, 'user_prompt', { cwd: this.options.cwd, prompt: task });
     const systemPrompt = this.systemPrompt;
     const messages: ChatMessage[] = [
       { role: 'system', content: systemPrompt },
-      ...contextMessages(this.config),
+      ...contextMessages(this.config, skillContext),
       ...history,
       { role: 'user', content: task },
     ];
@@ -54,6 +58,7 @@ export class CodingAgent {
 
       if (response.toolCalls.length === 0) {
         const result = { finalMessage, iterations: iteration, usage };
+        await runHooks(this.config.hooks, 'agent_done', { cwd: this.options.cwd, prompt: task, finalMessage: result.finalMessage });
         emit(callbacks, { type: 'done', result });
         return result;
       }
@@ -74,7 +79,15 @@ export class CodingAgent {
           messages.push({ role: 'tool', toolCallId: toolCall.id, name: tool.name, content });
           continue;
         }
+        await runHooks(this.config.hooks, 'before_tool', { cwd: this.options.cwd, prompt: task, toolName: tool.name, toolInput: toolCall.input });
         const content = await tool.run(toolCall.input, this.options).catch((error: unknown) => `Tool error: ${errorMessage(error)}`);
+        await runHooks(this.config.hooks, 'after_tool', {
+          cwd: this.options.cwd,
+          prompt: task,
+          toolName: tool.name,
+          toolInput: toolCall.input,
+          toolOutput: content,
+        });
         emit(callbacks, { type: 'tool_result', id: toolCall.id, name: tool.name, content });
         messages.push({ role: 'tool', toolCallId: toolCall.id, name: tool.name, content });
       }
@@ -82,20 +95,19 @@ export class CodingAgent {
 
     const message = `Stopped after ${this.options.maxIterations} iterations. Ask a more focused question or increase --max-iterations.`;
     const result = { finalMessage: finalMessage || message, iterations: this.options.maxIterations, usage };
+    await runHooks(this.config.hooks, 'agent_done', { cwd: this.options.cwd, prompt: task, finalMessage: result.finalMessage });
     emit(callbacks, { type: 'done', result });
     return result;
   }
 
 }
 
-function contextMessages(config: RuntimeConfig): ChatMessage[] {
+function contextMessages(config: RuntimeConfig, skillContext: string): ChatMessage[] {
   const context: string[] = [];
   if (config.mcpServers && config.mcpServers.length > 0) {
     context.push(`Configured MCP servers:\\n${JSON.stringify(config.mcpServers.filter((server) => server.enabled !== false), null, 2)}`);
   }
-  if (config.skills && config.skills.length > 0) {
-    context.push(`Configured skills:\\n${JSON.stringify(config.skills.filter((skill) => skill.enabled !== false), null, 2)}`);
-  }
+  if (skillContext) context.push(`Loaded skills:\\n${skillContext}`);
   return context.length > 0 ? [{ role: 'system', content: context.join('\\n\\n') }] : [];
 }
 
