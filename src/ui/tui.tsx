@@ -20,6 +20,7 @@ import { createConfigWizardState, saveWizardConfig, updateWizard, wizardPrompt, 
 import { createSession, listSessions, readSession, saveSession, exportSession } from '../session/store.js';
 import { getTodoStore } from '../tools/todo.js';
 import { getMcpRegistry } from '../mcp/registry.js';
+import { SUPPORTED_MODELS } from '../constants.js';
 import { formatNetworkPolicy, allowHost, denyHost, resetNetworkPolicy } from '../policy/network.js';
 import { describeSandbox, defaultSandboxForMode } from '../policy/sandbox.js';
 import { renderMarkdown } from './markdown.js';
@@ -50,7 +51,7 @@ import {
   SLASH_COMMAND_HELP,
 } from './commands.js';
 import { summarizeToolInput, summarizeToolOutput, formatTimestamp, formatDuration } from './format.js';
-import { SPLASH, statusLine, modeIndicator, MODE_LABELS, shortenPath, verbForTool, formatWorkflowSummary } from './theme.js';
+import { SPLASH, statusLine, modeIndicator, shortenPath, verbForTool, formatWorkflowSummary } from './theme.js';
 // keep statusLine/modeIndicator imports — used by /status and /mode handlers below.
 
 interface PendingApproval {
@@ -85,7 +86,7 @@ interface TuiAppProps {
 type ConfigWizard = Awaited<ReturnType<typeof createConfigWizardState>>;
 
 export async function runTui(config: RuntimeConfig, tools: ToolDefinition[], options: AgentOptions): Promise<void> {
-  const instance = render(<TuiApp config={config} tools={tools} options={options} />);
+  const instance = render(<TuiApp config={config} tools={tools} options={options} />, { patchConsole: false });
   await instance.waitUntilExit();
 }
 
@@ -110,6 +111,7 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
   const [alwaysApprove, setAlwaysApprove] = useState(options.autoApprove);
   const [session, setSession] = useState<SessionRecord>(() => createSession('Untitled session', options.cwd));
   const [wizard, setWizard] = useState<ConfigWizard | undefined>();
+  const [runtimeConfig, setRuntimeConfig] = useState<RuntimeConfig>(config);
   const [mode, setMode] = useState<InteractionMode>(options.mode ?? 'agent');
   const [sandbox, setSandbox] = useState<SandboxLevel>(options.sandbox ?? defaultSandboxForMode(options.mode ?? 'agent'));
   const [streamingText, setStreamingText] = useState('');
@@ -129,17 +131,18 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
   const [namedSubagentsCount, setNamedSubagentsCount] = useState(0);
   const alwaysApproveRef = useRef(options.autoApprove);
   const abortRef = useRef<AbortController | null>(null);
+  const lastCtrlCRef = useRef(0);
   const toolStartTimes = useRef<Map<string, number>>(new Map());
   const indexCounter = useRef(0);
   const thinkingBufferRef = useRef(new ThinkingBuffer());
   const streamingBufferRef = useRef('');
-  const agent = new CodingAgent(config, tools, { ...options, mode, sandbox });
+  const agent = new CodingAgent(runtimeConfig, tools, { ...options, mode, sandbox });
 
   const mcpToolCount = tools.filter((tool) => tool.name.startsWith('mcp__')).length;
   const builtinToolCount = tools.length - mcpToolCount;
-  const enabledMcpServers = config.mcpServers?.filter((server) => server.enabled !== false).length ?? 0;
-  const enabledHooks = config.hooks?.filter((hook) => hook.enabled !== false).length ?? 0;
-  const enabledConfigSkills = config.skills?.filter((skill) => skill.enabled !== false).length ?? 0;
+  const enabledMcpServers = runtimeConfig.mcpServers?.filter((server) => server.enabled !== false).length ?? 0;
+  const enabledHooks = runtimeConfig.hooks?.filter((hook) => hook.enabled !== false).length ?? 0;
+  const enabledConfigSkills = runtimeConfig.skills?.filter((skill) => skill.enabled !== false).length ?? 0;
 
   // Load persistent input history once.
   useEffect(() => {
@@ -248,7 +251,7 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
       if (event.type === 'assistant_message') {
         flushThinking();
         flushStreaming();
-        append({ kind: 'assistant', title: 'mimo', body: renderMarkdown(event.content), timestamp: formatTimestamp() });
+        append({ kind: 'assistant', title: 'mimo', body: renderMarkdown(event.content), timestamp: formatTimestamp(), merge: 'append' });
         addSessionMessages([{ role: 'assistant', content: event.content }]);
         return;
       }
@@ -257,7 +260,7 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
         flushStreaming();
         toolStartTimes.current.set(event.id, Date.now());
         setActiveTool({ name: event.name, startedAt: Date.now() });
-        append({ kind: 'tool_call', title: `${event.name}`, body: summarizeToolInput(event.input), timestamp: formatTimestamp() });
+        append({ kind: 'tool_call', title: `${event.name}`, body: summarizeToolInput(event.input), timestamp: formatTimestamp(), collapsed: true });
         return;
       }
       if (event.type === 'tool_result') {
@@ -327,11 +330,11 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
       if (command.name === 'clear') {
         setMessages([{ id: Date.now(), kind: 'splash', title: '', body: SPLASH }]);
       }
-      if (command.name === 'config') {
-        void createConfigWizardState().then(setWizard).catch((error: unknown) => append({ kind: 'error', title: 'config', body: errorMessage(error) }));
+      if (command.name === 'settings' || command.name === 'config') {
+        void createConfigWizardState().then(setWizard).catch((error: unknown) => append({ kind: 'error', title: 'settings', body: errorMessage(error) }));
       }
       if (command.name === 'init') {
-        void initProject(options.cwd, { model: config.model, baseUrl: config.baseUrl })
+        void initProject(options.cwd, { model: runtimeConfig.model, baseUrl: runtimeConfig.baseUrl })
           .then((result) => {
             const lines = [
               `Initialized project at ${options.cwd}`,
@@ -365,7 +368,7 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
         append({
           kind: 'system',
           title: 'mcp servers',
-          body: formatList('Configured MCP servers', (config.mcpServers ?? []).map((server) => {
+          body: formatList('Configured MCP servers', (runtimeConfig.mcpServers ?? []).map((server) => {
             const status = statuses.get(server.name);
             const lifecycle = server.enabled === false
               ? 'disabled'
@@ -382,7 +385,7 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
       if (command.name === 'skill') append({
         kind: 'system',
         title: 'skills (config)',
-        body: formatList('Configured skills', (config.skills ?? []).map((skill) => `${skill.enabled === false ? '[disabled]' : '[enabled]'} ${skill.name}${skill.path ? ` — ${skill.path}` : ''}${skill.description ? ` — ${skill.description}` : ''}`)),
+        body: formatList('Configured skills', (runtimeConfig.skills ?? []).map((skill) => `${skill.enabled === false ? '[disabled]' : '[enabled]'} ${skill.name}${skill.path ? ` — ${skill.path}` : ''}${skill.description ? ` — ${skill.description}` : ''}`)),
         timestamp: formatTimestamp(),
       });
       if (command.name === 'skills') {
@@ -425,7 +428,7 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
       if (command.name === 'hooks') append({
         kind: 'system',
         title: 'hooks',
-        body: formatList('Configured hooks', (config.hooks ?? []).map((hook) => `${hook.enabled === false ? '[disabled]' : '[enabled]'} ${describeHookConfig(hook)}`)),
+        body: formatList('Configured hooks', (runtimeConfig.hooks ?? []).map((hook) => `${hook.enabled === false ? '[disabled]' : '[enabled]'} ${describeHookConfig(hook)}`)),
         timestamp: formatTimestamp(),
       });
       if (command.name === 'tools') {
@@ -435,7 +438,7 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
         });
         append({ kind: 'system', title: `tools (${tools.length})`, body: toolLines.join('\n'), timestamp: formatTimestamp() });
       }
-      if (command.name === 'status') append({ kind: 'system', title: 'status', body: statusLine(config, session, tools, usage, options.cwd, mode, sessionCost), timestamp: formatTimestamp() });
+      if (command.name === 'status') append({ kind: 'system', title: 'status', body: statusLine(runtimeConfig, session, tools, usage, options.cwd, mode, sessionCost), timestamp: formatTimestamp() });
       if (command.name === 'workflow') append({
         kind: 'system',
         title: 'workflow',
@@ -467,6 +470,17 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
           append({ kind: 'system', title: 'mode', body: `Current: ${modeIndicator(mode)}\nUsage: /mode [plan|agent|yolo]`, timestamp: formatTimestamp() });
         }
       }
+      if (command.name === 'model') {
+        const target = command.args[0];
+        if (!target) {
+          append({ kind: 'system', title: 'model', body: `Current: ${runtimeConfig.model}\n${SUPPORTED_MODELS.map((model) => `  ${model === runtimeConfig.model ? '›' : ' '} ${model}`).join('\n')}`, timestamp: formatTimestamp() });
+        } else if (SUPPORTED_MODELS.includes(target as (typeof SUPPORTED_MODELS)[number])) {
+          setRuntimeConfig((current) => ({ ...current, model: target }));
+          append({ kind: 'system', title: 'model', body: `Switched to ${target} for this session.`, timestamp: formatTimestamp() });
+        } else {
+          append({ kind: 'error', title: 'model', body: `Unsupported model: ${target}\n${SUPPORTED_MODELS.join('\n')}`, timestamp: formatTimestamp() });
+        }
+      }
       if (command.name === 'compact') {
         setSession((current) => {
           const compacted = compactMessages(current.messages);
@@ -483,7 +497,7 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
         }
       }
       if (command.name === 'doctor') {
-        void runDiagnostics(config, options.cwd)
+        void runDiagnostics(runtimeConfig, options.cwd)
           .then((results) => append({ kind: 'system', title: 'diagnostics', body: formatDiagnostics(results), timestamp: formatTimestamp() }))
           .catch((error: unknown) => append({ kind: 'error', title: 'doctor', body: errorMessage(error) }));
       }
@@ -565,7 +579,7 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
 
       return true;
     },
-    [append, builtinToolCount, config, discoveredSkillsCount, enabledConfigSkills, enabledHooks, enabledMcpServers, exit, mcpToolCount, messages, mode, namedSubagentsCount, options.cwd, sandbox, session, sessionCost, tools, usage],
+    [append, builtinToolCount, discoveredSkillsCount, enabledConfigSkills, enabledHooks, enabledMcpServers, exit, mcpToolCount, messages, mode, namedSubagentsCount, options.cwd, runtimeConfig, sandbox, session, sessionCost, tools, usage],
   );
 
   const submit = useCallback(
@@ -661,21 +675,32 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
     // Ctrl+C: interrupt run, else exit.
     if (key.ctrl && input === 'c') {
       if (running) {
-        append({ kind: 'system', title: 'interrupted', body: 'Stopping current run.', timestamp: formatTimestamp() });
-        abortRef.current?.abort();
-        setRunning(false);
-        flushStreaming();
+        const nowMs = Date.now();
+        if (nowMs - lastCtrlCRef.current < 1500) {
+          try { setRawMode(false); } catch { /* ignore */ }
+          exit();
+          return;
+        }
+        append({ kind: 'system', title: 'interrupted', body: 'Stopping current run. Press Ctrl+C again to quit.', timestamp: formatTimestamp() });
+        lastCtrlCRef.current = nowMs;
         return;
       }
       try { setRawMode(false); } catch { /* ignore */ }
       exit();
       return;
     }
-    // Esc: cancel approval (== deny). Otherwise clear pending lines, then exit when idle.
+    // Esc: cancel approval or interrupt the current run; exit only when idle.
     if (key.escape) {
       if (approval) {
         approval.resolve('deny');
         setApproval(undefined);
+        return;
+      }
+      if (running) {
+        append({ kind: 'system', title: 'interrupted', body: 'Stopping current run.', timestamp: formatTimestamp() });
+        abortRef.current?.abort();
+        flushStreaming();
+        setStreamingThinking('');
         return;
       }
       if (pendingLines.length > 0) {
@@ -772,7 +797,7 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
   const verb = activeTool ? `${verbForTool(activeTool.name)} ${activeTool.name}…` : mode === 'plan' ? 'Analyzing…' : 'Thinking…';
   const elapsed = activeTool ? formatDuration(now - activeTool.startedAt) : undefined;
   const usageSummary = formatUsage(usage);
-  const costSummary = formatCost(sessionCost);
+  const inputLines = Math.max(1, prompt.split('\n').length);
   const handlePromptChange = useCallback(
     (value: string) => {
       setPrompt(value);
@@ -788,8 +813,8 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
 
   return (
     <Box flexDirection="column">
-      <Box flexDirection="column" minHeight={20} paddingX={1}>
-        {messages.slice(-50).map((message) => (
+      <Box flexDirection="column" paddingX={1}>
+        {messages.slice(-28).map((message) => (
           <TranscriptEntry key={message.id} message={message} />
         ))}
         {streamingThinking ? (
@@ -856,7 +881,7 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
               ))}
             </Box>
           ) : null}
-          <Box borderStyle="round" borderColor={wizard ? 'yellow' : modeBorderColor(mode)} paddingX={1}>
+          <Box borderStyle="round" borderColor={wizard ? 'yellow' : modeBorderColor(mode)} paddingX={1} minHeight={inputLines + 2}>
             <Text color={wizard ? 'yellow' : modeBorderColor(mode)}>{wizard ? wizardPrompt(wizard) : `▎ ${mode}${inputHint}`} </Text>
             <MimoTextInput
               key={inputKey}
@@ -869,20 +894,15 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
             />
           </Box>
           <BottomStatusBar
-            config={config}
+            config={runtimeConfig}
             cwd={options.cwd}
-            mode={mode}
             branch={branch}
-            sandbox={sandbox}
             contextBar={contextBar}
             usageSummary={usageSummary}
-            costSummary={costSummary}
             alwaysApprove={alwaysApprove}
             dryRun={options.dryRun}
             mcpToolCount={mcpToolCount}
-            hookCount={enabledHooks}
             skillCount={enabledConfigSkills + discoveredSkillsCount}
-            subagentCount={namedSubagentsCount}
           />
         </Box>
       )}
@@ -894,18 +914,13 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
 interface BottomStatusBarProps {
   config: RuntimeConfig;
   cwd: string;
-  mode: InteractionMode;
   branch: string | undefined;
-  sandbox: SandboxLevel;
   contextBar: string;
   usageSummary: string;
-  costSummary: string;
   alwaysApprove: boolean;
   dryRun: boolean | undefined;
   mcpToolCount: number;
-  hookCount: number;
   skillCount: number;
-  subagentCount: number;
 }
 
 /**
@@ -915,24 +930,19 @@ interface BottomStatusBarProps {
  * dim line so the transcript above it stays the visual focus.
  */
 function BottomStatusBar(props: BottomStatusBarProps): React.ReactElement {
-  const { config, cwd, mode, branch, sandbox, contextBar, usageSummary, costSummary, alwaysApprove, dryRun, mcpToolCount, hookCount, skillCount, subagentCount } = props;
-  const segments = [MODE_LABELS[mode], config.model, describeSandbox(sandbox)];
+  const { config, cwd, branch, contextBar, usageSummary, alwaysApprove, dryRun, mcpToolCount, skillCount } = props;
+  const segments = [config.model];
   if (alwaysApprove) segments.push('auto-approve');
   if (dryRun) segments.push('dry-run');
-  segments.push(`tools ${mcpToolCount > 0 ? `+${mcpToolCount} MCP` : 'local'}`);
+  if (mcpToolCount > 0) segments.push(`${mcpToolCount} MCP`);
   if (skillCount > 0) segments.push(`skills ${skillCount}`);
-  if (hookCount > 0) segments.push(`hooks ${hookCount}`);
-  if (subagentCount > 0) segments.push(`agents ${subagentCount}`);
   segments.push(shortenPath(cwd));
   if (branch) segments.push(`⎇ ${branch}`);
   if (contextBar) segments.push(contextBar);
   if (usageSummary) segments.push(usageSummary);
-  if (costSummary) segments.push(costSummary);
-  const quickActions = ' /workflow · /timeline · /diff · /doctor';
   return (
-    <Box flexDirection="column" paddingX={1}>
+    <Box paddingX={1}>
       <Text dimColor>{segments.join(' · ')}</Text>
-      <Text dimColor>{quickActions}</Text>
     </Box>
   );
 }
@@ -988,12 +998,12 @@ async function handleWizardInput(
   if (wizard.step === 'review' && task === 'save') {
     const filePath = await saveWizardConfig(wizard);
     setWizard(undefined);
-    append({ kind: 'system', title: 'config saved', body: `${filePath}\nRestart TUI to reload runtime config.`, timestamp: formatTimestamp() });
+    append({ kind: 'system', title: 'settings saved', body: `${filePath}\nRuntime-only API keys are not saved. Restart TUI to reload persisted settings.`, timestamp: formatTimestamp() });
     return;
   }
   const nextWizard = updateWizard(wizard, task);
   setWizard(nextWizard.error?.startsWith('Cancelled') ? undefined : nextWizard);
-  if (nextWizard.error?.startsWith('Cancelled')) append({ kind: 'system', title: 'config', body: nextWizard.error, timestamp: formatTimestamp() });
+  if (nextWizard.error?.startsWith('Cancelled')) append({ kind: 'system', title: 'settings', body: nextWizard.error, timestamp: formatTimestamp() });
 }
 
 async function doLoadSession(

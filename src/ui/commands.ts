@@ -1,6 +1,7 @@
 export type SlashCommandName =
   | 'help'
   | 'config'
+  | 'settings'
   | 'sessions'
   | 'new'
   | 'load'
@@ -27,6 +28,7 @@ export type SlashCommandName =
   | 'bug'
   | 'context'
   | 'mode'
+  | 'model'
   | 'cost'
   | 'todo'
   | 'network'
@@ -49,7 +51,8 @@ export interface SlashCommand {
 
 export const SLASH_COMMANDS: SlashCommandSpec[] = [
   { name: 'help', usage: '/help', description: 'Show commands and shortcuts' },
-  { name: 'config', usage: '/config', description: 'Run full TUI config wizard' },
+  { name: 'settings', usage: '/settings', description: 'Open settings wizard' },
+  { name: 'config', usage: '/config', description: 'Alias for /settings' },
   { name: 'init', usage: '/init', description: 'Scaffold .mimo-code.json + AGENTS.md for the project' },
   { name: 'sessions', usage: '/sessions', description: 'List reusable sessions' },
   { name: 'new', usage: '/new [title]', description: 'Start a new reusable session' },
@@ -76,6 +79,7 @@ export const SLASH_COMMANDS: SlashCommandSpec[] = [
   { name: 'bug', usage: '/bug <description>', description: 'Report a bug or issue' },
   { name: 'context', usage: '/context', description: 'Show current context window usage' },
   { name: 'mode', usage: '/mode [plan|agent|yolo]', description: 'Switch interaction mode' },
+  { name: 'model', usage: '/model [name]', description: 'Show or switch model for this session' },
   { name: 'cost', usage: '/cost', description: 'Show accumulated cost estimate for this session' },
   { name: 'todo', usage: '/todo', description: 'Show current task checklist' },
   { name: 'network', usage: '/network [allow|deny <host>]', description: 'Show or configure network access policy' },

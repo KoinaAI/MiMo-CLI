@@ -59,8 +59,9 @@ program
   });
 
 program
-  .command('config')
-  .description('Create or update ~/.mimo-code/config.json')
+  .command('settings')
+  .alias('config')
+  .description('Create or update ~/.mimo-code/config.json settings')
   .action(async () => {
     const path = await configureInteractively();
     console.log(chalk.green(`Saved config to ${path}`));

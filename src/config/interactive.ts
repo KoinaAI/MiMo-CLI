@@ -1,15 +1,10 @@
-import { confirm, input, password, select } from '@inquirer/prompts';
+import { confirm, input, select } from '@inquirer/prompts';
 import { DEFAULT_BASE_URL, DEFAULT_MAX_TOKENS, DEFAULT_MODEL, DEFAULT_TEMPERATURE, SUPPORTED_MODELS } from '../constants.js';
 import type { ApiFormat, PersistedConfig } from '../types.js';
 import { readPersistedConfig, tokenPlanBaseUrl, userConfigPath, writeUserConfig } from './config.js';
 
 export async function configureInteractively(): Promise<string> {
   const existing = await readPersistedConfig(userConfigPath());
-  const apiKey = await password({
-    message: 'MiMo API Key',
-    mask: '*',
-    validate: (value) => (value.trim().length > 0 ? true : 'API Key is required'),
-  });
   const plan = await select({
     message: 'Billing/base URL type',
     choices: [
@@ -68,7 +63,6 @@ export async function configureInteractively(): Promise<string> {
     : undefined;
 
   const config: PersistedConfig = {
-    apiKey,
     baseUrl,
     format,
     model,

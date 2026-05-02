@@ -89,4 +89,12 @@ describe('MimoTextInput', () => {
     // does not throw because of an out-of-range cursor.
     expect(true).toBe(true);
   });
+
+  it('renders multiline input on separate lines', () => {
+    const { lastFrame } = render(<Harness initial={'one\ntwo'} />);
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('one');
+    expect(frame).toContain('two');
+    expect(frame).toContain('\n');
+  });
 });

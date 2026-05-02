@@ -25,6 +25,8 @@ export interface TranscriptMessage {
   collapsed?: boolean | undefined;
   /** Index used by /expand <n> commands. */
   index?: number | undefined;
+  /** Append mode means later user prompts continue the same turn context. */
+  merge?: 'append' | undefined;
 }
 
 interface MessageProps {
@@ -50,10 +52,10 @@ export function TranscriptEntry({ message }: MessageProps): React.ReactElement {
   const duration = message.durationMs !== undefined ? ` · ${formatDurationShort(message.durationMs)}` : '';
   const idxLabel = message.index !== undefined ? ` #${message.index}` : '';
   return (
-    <Box flexDirection="column" marginBottom={0}>
+    <Box flexDirection="column" marginBottom={message.kind === 'tool_result' ? 0 : 1}>
       <Text>
-        <Text color={color} bold>{sigil} {message.title}</Text>
-        <Text dimColor>{idxLabel}{ts}{duration}</Text>
+        <Text color={color} bold={message.kind !== 'tool_call' && message.kind !== 'tool_result'}>{sigil} {message.title}</Text>
+        <Text dimColor>{idxLabel}{ts}{duration}{message.merge === 'append' ? ' · appendable' : ''}</Text>
       </Text>
       {!message.collapsed && message.body ? <MessageBody message={message} /> : null}
       {message.collapsed ? (
@@ -87,9 +89,9 @@ export function decoration(kind: TranscriptKind): { sigil: string; color: 'gray'
     case 'thinking':
       return { sigil: '▎', color: 'gray' };
     case 'tool_call':
-      return { sigil: '⏵', color: 'yellow' };
+      return { sigil: '›', color: 'gray' };
     case 'tool_result':
-      return { sigil: '↪', color: 'gray' };
+      return { sigil: '·', color: 'gray' };
     case 'diff':
       return { sigil: '±', color: 'magenta' };
     case 'error':

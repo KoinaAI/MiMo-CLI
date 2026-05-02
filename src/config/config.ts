@@ -62,10 +62,10 @@ export async function loadConfig(cwd: string, overrides: PersistedConfig = {}): 
     ...overrides,
   };
 
-  const apiKey = merged.apiKey;
+  const apiKey = merged.apiKey ?? await promptApiKeyOnce();
   if (!apiKey) {
     throw new MiMoCliError(
-      'Missing API key. Run `mimo-code config` or set MIMO_API_KEY / OPENAI_API_KEY / ANTHROPIC_API_KEY.',
+      'Missing API key. Run `mimo-code settings` or set MIMO_API_KEY / OPENAI_API_KEY / ANTHROPIC_API_KEY.',
     );
   }
 
@@ -84,6 +84,17 @@ export async function loadConfig(cwd: string, overrides: PersistedConfig = {}): 
     ...(merged.skills ? { skills: merged.skills } : {}),
     ...(merged.hooks ? { hooks: merged.hooks } : {}),
   };
+}
+
+async function promptApiKeyOnce(): Promise<string | undefined> {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) return undefined;
+  const { password } = await import('@inquirer/prompts');
+  const value = await password({
+    message: 'MiMo API key for this session',
+    mask: '*',
+    validate: (input) => (input.trim().length > 0 ? true : 'API key is required'),
+  });
+  return value.trim();
 }
 
 export function envToConfig(env: NodeJS.ProcessEnv = process.env): PersistedConfig {

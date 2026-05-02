@@ -64,6 +64,12 @@ export function MimoTextInput({
       if (key.tab || key.escape) return;
       if (key.upArrow || key.downArrow) return;
       if (key.ctrl && (input === 'c' || input === 'l' || input === 'u' || input === 'w')) return;
+      if (key.ctrl && input === 'j') {
+        const next = value.slice(0, cursor) + '\n' + value.slice(cursor);
+        onChange(next);
+        setCursor(cursor + 1);
+        return;
+      }
 
       if (key.return) {
         onSubmit?.(value);
@@ -111,6 +117,15 @@ export function MimoTextInput({
     { isActive: focus },
   );
 
+  const renderValue = (text: string, cursorIndex: number | undefined): string => {
+    let rendered = '';
+    for (let i = 0; i <= text.length; i += 1) {
+      if (i === cursorIndex) rendered += chalk.inverse(text[i] ?? ' ');
+      if (i < text.length && i !== cursorIndex) rendered += text[i];
+    }
+    return rendered;
+  };
+
   if (value.length === 0) {
     if (!focus || !showCursor) {
       return <Text>{placeholder ? chalk.grey(placeholder) : ''}</Text>;
@@ -122,17 +137,25 @@ export function MimoTextInput({
     return <Text>{chalk.inverse(' ')}</Text>;
   }
 
-  if (!focus || !showCursor) {
-    return <Text>{value}</Text>;
+  const lines = value.split('\n');
+  const offsets: number[] = [];
+  let offset = 0;
+  for (const line of lines) {
+    offsets.push(offset);
+    offset += line.length + 1;
   }
 
-  let rendered = '';
-  for (let i = 0; i < value.length; i += 1) {
-    const ch = value[i] ?? '';
-    rendered += i === cursor ? chalk.inverse(ch) : ch;
-  }
-  if (cursor === value.length) rendered += chalk.inverse(' ');
-  return <Text>{rendered}</Text>;
+  return (
+    <Text>
+      {lines.map((line, index) => {
+        const start = offsets[index] ?? 0;
+        const end = start + line.length;
+        const cursorInLine = focus && showCursor && cursor >= start && cursor <= end ? cursor - start : undefined;
+        const content = cursorInLine === undefined ? line : renderValue(line, cursorInLine);
+        return `${index === 0 ? '' : '\n'}${content}`;
+      }).join('')}
+    </Text>
+  );
 }
 
 export default MimoTextInput;
