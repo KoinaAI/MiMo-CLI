@@ -3,7 +3,6 @@ import type { HookEvent, McpServerConfig, PersistedConfig, SkillConfig } from '.
 import { readPersistedConfig, tokenPlanBaseUrl, userConfigPath, writeUserConfig } from './config.js';
 
 export type ConfigWizardStep =
-  | 'apiKey'
   | 'baseUrlType'
   | 'tokenRegion'
   | 'customBaseUrl'
@@ -38,7 +37,7 @@ export async function createConfigWizardState(): Promise<ConfigWizardState> {
   if (existing.skills) draft.skills = existing.skills;
   if (existing.hooks) draft.hooks = existing.hooks;
   return {
-    step: 'apiKey',
+    step: 'baseUrlType',
     existing,
     draft,
   };
@@ -46,8 +45,6 @@ export async function createConfigWizardState(): Promise<ConfigWizardState> {
 
 export function wizardPrompt(state: ConfigWizardState): string {
   switch (state.step) {
-    case 'apiKey':
-      return 'API key for this launch（输入 . 跳过，不写入配置文件）';
     case 'baseUrlType':
       return 'Provider：api / token / custom';
     case 'tokenRegion':
@@ -86,7 +83,7 @@ export function wizardSummary(state: ConfigWizardState): string {
     `MCP servers: ${state.draft.mcpServers?.length ?? 0}`,
     `Skills: ${state.draft.skills?.length ?? 0}`,
     `Hooks: ${state.draft.hooks?.length ?? 0}`,
-    'API key: runtime only, not saved',
+    'API key: startup/runtime only, not saved here',
   ];
   return lines.join('\n');
 }
@@ -97,9 +94,6 @@ export function updateWizard(state: ConfigWizardState, rawInput: string): Config
   if (input === 'back') return { ...state, step: previousStep(state.step), error: undefined };
 
   try {
-    if (state.step === 'apiKey') {
-      return next(state, 'baseUrlType', {});
-    }
     if (state.step === 'baseUrlType') {
       if (input === 'api' || input === '') return next(state, 'format', { baseUrl: DEFAULT_BASE_URL });
       if (input === 'token') return next(state, 'tokenRegion', {});
@@ -174,7 +168,6 @@ function withError(state: ConfigWizardState, error: string): ConfigWizardState {
 
 function previousStep(step: ConfigWizardStep): ConfigWizardStep {
   const steps: ConfigWizardStep[] = [
-    'apiKey',
     'baseUrlType',
     'tokenRegion',
     'customBaseUrl',
@@ -189,7 +182,7 @@ function previousStep(step: ConfigWizardStep): ConfigWizardStep {
     'review',
   ];
   const index = steps.indexOf(step);
-  return steps[Math.max(0, index - 1)] ?? 'apiKey';
+  return steps[Math.max(0, index - 1)] ?? 'baseUrlType';
 }
 
 function parseMcpServersInput(input: string): McpServerConfig[] {
