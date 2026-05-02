@@ -1,6 +1,7 @@
 import { MiMoClient } from '../api/client.js';
 import { discoverProjectContext, buildProjectContextPrompt } from '../context/project.js';
-import { runHooks } from '../hooks.js';
+import { runHooks, wasCancelled } from '../hooks.js';
+import { defaultSandboxForMode, isToolAllowed } from '../policy/sandbox.js';
 import { buildSkillContext } from '../skills/loader.js';
 import type {
   AgentEvent,
@@ -51,7 +52,7 @@ export class CodingAgent {
     const sessionId = crypto.randomUUID().slice(0, 8);
     void logSessionEvent(sessionId, 'session_start', `task: ${task.slice(0, 200)}`);
 
-    const skillContext = await buildSkillContext(this.config.skills, this.options.cwd);
+    const skillContext = await buildSkillContext(this.config.skills, this.options.cwd, task);
     const projectContexts = await discoverProjectContext(this.options.cwd);
     const projectContextPrompt = buildProjectContextPrompt(projectContexts);
     await runHooks(this.config.hooks, 'user_prompt', { cwd: this.options.cwd, prompt: task });
@@ -111,6 +112,14 @@ export class CodingAgent {
         }
         emit(callbacks, { type: 'tool_call', id: toolCall.id, name: toolCall.name, input: toolCall.input });
         void logToolCall(sessionId, toolCall.name, toolCall.input);
+        const sandbox = this.options.sandbox ?? defaultSandboxForMode(this.options.mode ?? 'agent');
+        const sandboxDecision = isToolAllowed(sandbox, tool, toolCall.input, this.options.cwd);
+        if (!sandboxDecision.allowed) {
+          const blocked = `Sandbox blocked: ${sandboxDecision.reason}`;
+          emit(callbacks, { type: 'tool_result', id: toolCall.id, name: tool.name, content: blocked });
+          messages.push({ role: 'tool', toolCallId: toolCall.id, name: tool.name, content: blocked });
+          continue;
+        }
         const approval = await approveToolCall(toolCall, tool, callbacks, this.options);
         if (approval === 'deny') {
           const content = `Tool call denied by user: ${toolCall.name}`;
@@ -118,10 +127,24 @@ export class CodingAgent {
           messages.push({ role: 'tool', toolCallId: toolCall.id, name: tool.name, content });
           continue;
         }
-        await runHooks(this.config.hooks, 'before_tool', { cwd: this.options.cwd, prompt: task, toolName: tool.name, toolInput: toolCall.input });
+        const beforeResults = await runHooks(this.config.hooks, 'before_tool', { cwd: this.options.cwd, prompt: task, toolName: tool.name, toolInput: toolCall.input });
+        const preResults = await runHooks(this.config.hooks, 'pre_tool_use', { cwd: this.options.cwd, prompt: task, toolName: tool.name, toolInput: toolCall.input });
+        if (wasCancelled(beforeResults) || wasCancelled(preResults)) {
+          const blockedContent = `Tool call '${tool.name}' blocked by hook (exit code 2).`;
+          emit(callbacks, { type: 'tool_result', id: toolCall.id, name: tool.name, content: blockedContent });
+          messages.push({ role: 'tool', toolCallId: toolCall.id, name: tool.name, content: blockedContent });
+          continue;
+        }
         const content = await tool.run(toolCall.input, this.options).catch((error: unknown) => `Tool error: ${errorMessage(error)}`);
         void logToolResult(sessionId, tool.name, content);
         await runHooks(this.config.hooks, 'after_tool', {
+          cwd: this.options.cwd,
+          prompt: task,
+          toolName: tool.name,
+          toolInput: toolCall.input,
+          toolOutput: content,
+        });
+        await runHooks(this.config.hooks, 'post_tool_use', {
           cwd: this.options.cwd,
           prompt: task,
           toolName: tool.name,

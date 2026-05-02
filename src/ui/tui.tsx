@@ -1,19 +1,27 @@
-import React, { useCallback, useMemo, useRef, useState } from 'react';
-import { Box, Newline, render, Text, useApp, useInput } from 'ink';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { Box, render, Text, useApp, useInput, useStdin } from 'ink';
 import TextInput from 'ink-text-input';
 import Spinner from 'ink-spinner';
 import SelectInput from 'ink-select-input';
 import { execSync } from 'node:child_process';
+import path from 'node:path';
 import { CodingAgent } from '../agent/agent.js';
+import { discoverNamedSubagents } from '../agent/named-subagents.js';
 import { formatCost } from '../agent/usage.js';
 import { compactMessages, formatContextStats } from '../context/compaction.js';
+import { discoverSkills } from '../skills/discover.js';
+import { initProject } from '../config/init.js';
 import { runDiagnostics, formatDiagnostics } from '../doctor/checks.js';
 import { addMemoryNote, listMemoryNotes } from '../memory/store.js';
 import { createConfigWizardState, saveWizardConfig, updateWizard, wizardPrompt, wizardSummary } from '../config/tui-wizard.js';
 import { createSession, listSessions, readSession, saveSession, exportSession } from '../session/store.js';
 import { getTodoStore } from '../tools/todo.js';
 import { formatNetworkPolicy, allowHost, denyHost, resetNetworkPolicy } from '../policy/network.js';
+import { describeSandbox, defaultSandboxForMode } from '../policy/sandbox.js';
 import { renderMarkdown } from './markdown.js';
+import { appendInputHistory, loadInputHistory } from './history.js';
+import { TranscriptEntry, type TranscriptKind, type TranscriptMessage } from './transcript.js';
+import { isLikelyDiff } from './diff.js';
 import type {
   AgentEvent,
   AgentOptions,
@@ -21,6 +29,7 @@ import type {
   CostEstimate,
   InteractionMode,
   RuntimeConfig,
+  SandboxLevel,
   SessionRecord,
   ToolApprovalDecision,
   ToolCall,
@@ -28,19 +37,14 @@ import type {
   TokenUsage,
 } from '../types.js';
 import { errorMessage } from '../utils/errors.js';
-import { completeSlashCommand, parseSlashCommand, slashCommandSuggestions, SLASH_COMMAND_HELP } from './commands.js';
-import { eventLabel, summarizeToolInput, summarizeToolOutput, formatTimestamp, formatDuration } from './format.js';
-import { SPLASH, statusLine, modeIndicator, formatDiffOutput, formatThinkingBlock } from './theme.js';
-
-interface TuiMessage {
-  id: number;
-  kind: 'system' | 'user' | 'assistant' | 'tool' | 'error' | 'thinking' | 'diff';
-  title: string;
-  body: string;
-  collapsed?: boolean | undefined;
-  timestamp?: string | undefined;
-  durationMs?: number | undefined;
-}
+import {
+  completeSlashCommand,
+  parseSlashCommand,
+  slashCommandSuggestions,
+  SLASH_COMMAND_HELP,
+} from './commands.js';
+import { summarizeToolInput, summarizeToolOutput, formatTimestamp, formatDuration } from './format.js';
+import { SPLASH, statusLine, modeIndicator, topStatusLine, verbForTool } from './theme.js';
 
 interface PendingApproval {
   toolCall: ToolCall;
@@ -63,16 +67,18 @@ export async function runTui(config: RuntimeConfig, tools: ToolDefinition[], opt
 
 function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
   const { exit } = useApp();
-  const [messages, setMessages] = useState<TuiMessage[]>(() => [
+  const { setRawMode } = useStdin();
+  const [messages, setMessages] = useState<TranscriptMessage[]>(() => [
     {
       id: 1,
       kind: 'system',
-      title: 'Welcome',
+      title: 'welcome',
       body: `${SPLASH}\nType /help for commands · Tab completes · /mode to switch · Ctrl+C to interrupt`,
       timestamp: formatTimestamp(),
     },
   ]);
   const [prompt, setPrompt] = useState('');
+  const [pendingLines, setPendingLines] = useState<string[]>([]);
   const [running, setRunning] = useState(false);
   const [approval, setApproval] = useState<PendingApproval | undefined>();
   const [usage, setUsage] = useState<TokenUsage>({});
@@ -81,57 +87,92 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
   const [session, setSession] = useState<SessionRecord>(() => createSession('Untitled session', options.cwd));
   const [wizard, setWizard] = useState<ConfigWizard | undefined>();
   const [mode, setMode] = useState<InteractionMode>(options.mode ?? 'agent');
+  const [sandbox, setSandbox] = useState<SandboxLevel>(options.sandbox ?? defaultSandboxForMode(options.mode ?? 'agent'));
   const [streamingText, setStreamingText] = useState('');
+  const [activeTool, setActiveTool] = useState<{ name: string; startedAt: number } | undefined>();
+  const [now, setNow] = useState<number>(() => Date.now());
+  const [inputHistory, setInputHistory] = useState<string[]>([]);
+  const [historyIndex, setHistoryIndex] = useState(-1);
+  const [tabCycle, setTabCycle] = useState(0);
+  const [branch, setBranch] = useState<string | undefined>(() => detectBranch(options.cwd));
   const alwaysApproveRef = useRef(options.autoApprove);
   const abortRef = useRef<AbortController | null>(null);
-  const [inputHistory] = useState<string[]>(() => []);
-  const [historyIndex, setHistoryIndex] = useState(-1);
   const toolStartTimes = useRef<Map<string, number>>(new Map());
+  const indexCounter = useRef(0);
+  const agent = new CodingAgent(config, tools, { ...options, sandbox });
 
-  const currentOptions = useMemo<AgentOptions>(() => ({
-    ...options,
-    mode,
-    autoApprove: mode === 'yolo' || alwaysApprove,
-  }), [options, mode, alwaysApprove]);
+  // Load persistent input history once.
+  useEffect(() => {
+    void loadInputHistory().then((entries) => {
+      setInputHistory(entries);
+    });
+  }, []);
 
-  const agent = useMemo(() => new CodingAgent(config, tools, currentOptions), [config, currentOptions, tools]);
+  // Tick the wall clock every second so the verb-phase spinner ("Reading… 12s")
+  // stays accurate while a tool is in flight.
+  useEffect(() => {
+    if (!activeTool && !running) return;
+    const id = setInterval(() => setNow(Date.now()), 500);
+    return () => clearInterval(id);
+  }, [activeTool, running]);
 
-  const append = useCallback((message: Omit<TuiMessage, 'id'>) => {
-    setMessages((current) => [...current.slice(-200), { ...message, id: Date.now() + Math.random(), timestamp: message.timestamp ?? formatTimestamp() }]);
+  const append = useCallback((message: Omit<TranscriptMessage, 'id'>) => {
+    setMessages((prev) => {
+      const idx = ['tool_call', 'tool_result', 'diff'].includes(message.kind) ? ++indexCounter.current : undefined;
+      const next: TranscriptMessage = { ...message, id: Date.now() + Math.random(), index: idx };
+      return [...prev, next].slice(-200);
+    });
   }, []);
 
   const addSessionMessages = useCallback((newMessages: ChatMessage[]) => {
-    setSession((current) => ({ ...current, messages: [...current.messages, ...newMessages], updatedAt: new Date().toISOString() }));
+    setSession((current) => ({
+      ...current,
+      messages: [...current.messages, ...newMessages],
+      updatedAt: new Date().toISOString(),
+    }));
   }, []);
 
   const handleEvent = useCallback(
     (event: AgentEvent) => {
-      if (event.type === 'thinking') {
-        append({ kind: 'system', title: eventLabel(event), body: 'Waiting for MiMo response…' });
-      } else if (event.type === 'assistant_thinking') {
-        append({ kind: 'thinking', title: 'Thinking', body: formatThinkingBlock(event.content) });
+      if (event.type === 'thinking') return;
+      if (event.type === 'assistant_thinking') {
+        append({ kind: 'thinking', title: 'thinking', body: event.content, timestamp: formatTimestamp(), collapsed: true });
       } else if (event.type === 'streaming_delta') {
         setStreamingText((current) => current + event.content);
       } else if (event.type === 'assistant_message') {
         setStreamingText('');
-        append({ kind: 'assistant', title: 'MiMo', body: renderMarkdown(event.content) });
+        append({ kind: 'assistant', title: 'mimo', body: renderMarkdown(event.content), timestamp: formatTimestamp() });
         addSessionMessages([{ role: 'assistant', content: event.content }]);
       } else if (event.type === 'tool_call') {
         toolStartTimes.current.set(event.id, Date.now());
-        append({ kind: 'tool', title: `⚡ ${event.name}`, body: summarizeToolInput(event.input), collapsed: false });
+        setActiveTool({ name: event.name, startedAt: Date.now() });
+        append({ kind: 'tool_call', title: `${event.name}`, body: summarizeToolInput(event.input), timestamp: formatTimestamp() });
       } else if (event.type === 'tool_result') {
         const startTime = toolStartTimes.current.get(event.id);
         const durationMs = startTime ? Date.now() - startTime : undefined;
         toolStartTimes.current.delete(event.id);
-        const durationStr = durationMs ? ` (${formatDuration(durationMs)})` : '';
-        append({ kind: 'tool', title: `← ${event.name}${durationStr}`, body: summarizeToolOutput(event.content), collapsed: true, durationMs: durationMs ?? undefined });
+        setActiveTool(undefined);
+        const isDiff = isLikelyDiff(event.content);
+        append({
+          kind: isDiff ? 'diff' : 'tool_result',
+          title: `${event.name}`,
+          body: isDiff ? event.content : summarizeToolOutput(event.content),
+          collapsed: !isDiff,
+          timestamp: formatTimestamp(),
+          ...(durationMs !== undefined ? { durationMs } : {}),
+        });
       } else if (event.type === 'error') {
-        append({ kind: 'error', title: 'Error', body: event.message });
+        append({ kind: 'error', title: 'error', body: event.message, timestamp: formatTimestamp() });
       } else if (event.type === 'done') {
         setUsage(event.result.usage);
         if (event.result.cost) setSessionCost(event.result.cost);
         const costStr = formatCost(event.result.cost);
-        append({ kind: 'system', title: 'Done', body: `Iterations: ${event.result.iterations}${costStr ? ` · Cost: ${costStr}` : ''}` });
+        append({
+          kind: 'system',
+          title: 'done',
+          body: `Iterations: ${event.result.iterations}${costStr ? ` · Cost: ${costStr}` : ''}`,
+          timestamp: formatTimestamp(),
+        });
       }
     },
     [addSessionMessages, append],
@@ -149,166 +190,211 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
       const command = parseSlashCommand(value);
       if (!command) return false;
 
-      if (command.name === 'help') append({ kind: 'system', title: 'Slash commands', body: SLASH_COMMAND_HELP });
+      if (command.name === 'help') append({ kind: 'system', title: 'help', body: SLASH_COMMAND_HELP, timestamp: formatTimestamp() });
       if (command.name === 'exit') exit();
       if (command.name === 'clear') {
-        setMessages([{ id: Date.now(), kind: 'system', title: 'Cleared', body: 'Chat cleared. Type /help for commands.', timestamp: formatTimestamp() }]);
+        setMessages([{ id: Date.now(), kind: 'system', title: 'cleared', body: 'Chat cleared. Type /help for commands.', timestamp: formatTimestamp() }]);
       }
       if (command.name === 'config') {
-        void createConfigWizardState().then(setWizard).catch((error: unknown) => append({ kind: 'error', title: 'Config', body: errorMessage(error) }));
+        void createConfigWizardState().then(setWizard).catch((error: unknown) => append({ kind: 'error', title: 'config', body: errorMessage(error) }));
+      }
+      if (command.name === 'init') {
+        void initProject(options.cwd, { model: config.model, baseUrl: config.baseUrl })
+          .then((result) => {
+            const lines = [
+              `Initialized project at ${options.cwd}`,
+              ...result.created.map((file) => `  + ${path.relative(options.cwd, file) || file}`),
+              ...(result.alreadyExisted.length > 0 ? ['', 'Already present (left untouched):', ...result.alreadyExisted.map((file) => `  · ${path.relative(options.cwd, file) || file}`)] : []),
+            ];
+            append({ kind: 'system', title: 'init', body: lines.join('\n'), timestamp: formatTimestamp() });
+          })
+          .catch((error: unknown) => append({ kind: 'error', title: 'init', body: errorMessage(error) }));
       }
       if (command.name === 'new') {
         const title = command.args.join(' ') || 'Untitled session';
         setSession(createSession(title, options.cwd));
         setMessages([]);
-        append({ kind: 'system', title: 'Session', body: `Started new session: ${title}` });
+        append({ kind: 'system', title: 'session', body: `Started new session: ${title}`, timestamp: formatTimestamp() });
       }
       if (command.name === 'save') {
         void saveSession(session)
-          .then((filePath) => append({ kind: 'system', title: 'Session saved', body: filePath }))
-          .catch((error: unknown) => append({ kind: 'error', title: 'Session save failed', body: errorMessage(error) }));
+          .then((filePath) => append({ kind: 'system', title: 'session saved', body: filePath, timestamp: formatTimestamp() }))
+          .catch((error: unknown) => append({ kind: 'error', title: 'save', body: errorMessage(error) }));
       }
       if (command.name === 'sessions') {
         void listSessions()
-          .then((sessions) => append({ kind: 'system', title: 'Sessions', body: formatSessions(sessions) }))
-          .catch((error: unknown) => append({ kind: 'error', title: 'Sessions', body: errorMessage(error) }));
+          .then((sessions) => append({ kind: 'system', title: 'sessions', body: formatSessions(sessions), timestamp: formatTimestamp() }))
+          .catch((error: unknown) => append({ kind: 'error', title: 'sessions', body: errorMessage(error) }));
       }
-      if (command.name === 'load') void loadSession(command.args[0], setSession, append);
-      if (command.name === 'mcp') append({ kind: 'system', title: 'MCP servers', body: JSON.stringify(config.mcpServers ?? [], null, 2) });
-      if (command.name === 'skill') append({ kind: 'system', title: 'Skills', body: JSON.stringify(config.skills ?? [], null, 2) });
-      if (command.name === 'hooks') append({ kind: 'system', title: 'Hooks', body: JSON.stringify(config.hooks ?? [], null, 2) });
+      if (command.name === 'load') void doLoadSession(command.args[0], setSession, append);
+      if (command.name === 'resume') void doResumeSession(setSession, append);
+      if (command.name === 'mcp') append({ kind: 'system', title: 'mcp servers', body: JSON.stringify(config.mcpServers ?? [], null, 2), timestamp: formatTimestamp() });
+      if (command.name === 'skill') append({ kind: 'system', title: 'skills (config)', body: JSON.stringify(config.skills ?? [], null, 2), timestamp: formatTimestamp() });
+      if (command.name === 'skills') {
+        void discoverSkills(options.cwd)
+          .then((skills) => {
+            if (skills.length === 0) {
+              append({ kind: 'system', title: 'skills', body: 'No skill files found in .mimo/skills or ~/.mimo-code/skills.\nRun /init to scaffold a sample skill.', timestamp: formatTimestamp() });
+              return;
+            }
+            const body = skills
+              .map((skill) => `[${skill.scope}] ${skill.name}${skill.description ? ` — ${skill.description}` : ''}\n  triggers: ${skill.triggers.join(', ') || '(manual)'}\n  ${skill.filePath}`)
+              .join('\n\n');
+            append({ kind: 'system', title: 'skills', body, timestamp: formatTimestamp() });
+          })
+          .catch((error: unknown) => append({ kind: 'error', title: 'skills', body: errorMessage(error) }));
+      }
+      if (command.name === 'agents') {
+        void discoverNamedSubagents(options.cwd)
+          .then((agents) => {
+            if (agents.length === 0) {
+              append({ kind: 'system', title: 'agents', body: 'No named subagents found in .mimo/agents/. Run /init to scaffold one.', timestamp: formatTimestamp() });
+              return;
+            }
+            const body = agents
+              .map((named) => `[${named.scope}] ${named.name}${named.description ? ` — ${named.description}` : ''}\n  tools: ${named.tools?.join(', ') ?? '(inherits all)'}\n  ${named.filePath}`)
+              .join('\n\n');
+            append({ kind: 'system', title: 'named agents', body, timestamp: formatTimestamp() });
+          })
+          .catch((error: unknown) => append({ kind: 'error', title: 'agents', body: errorMessage(error) }));
+      }
+      if (command.name === 'sandbox') {
+        const target = command.args[0];
+        if (target === 'read-only' || target === 'workspace-write' || target === 'danger-full-access') {
+          setSandbox(target);
+          append({ kind: 'system', title: 'sandbox', body: `Set sandbox: ${describeSandbox(target)}`, timestamp: formatTimestamp() });
+        } else {
+          append({ kind: 'system', title: 'sandbox', body: `Current: ${describeSandbox(sandbox)}\nUsage: /sandbox [read-only|workspace-write|danger-full-access]`, timestamp: formatTimestamp() });
+        }
+      }
+      if (command.name === 'hooks') append({ kind: 'system', title: 'hooks', body: JSON.stringify(config.hooks ?? [], null, 2), timestamp: formatTimestamp() });
       if (command.name === 'tools') {
         const toolLines = tools.map((tool) => {
           const readOnlyTag = tool.readOnly ? ' (read-only)' : '';
           return `  ${tool.name}${readOnlyTag} — ${tool.description}`;
         });
-        append({ kind: 'system', title: `Tools (${tools.length})`, body: toolLines.join('\n') });
+        append({ kind: 'system', title: `tools (${tools.length})`, body: toolLines.join('\n'), timestamp: formatTimestamp() });
       }
-      if (command.name === 'status') append({ kind: 'system', title: 'Status', body: statusLine(config, session, tools, usage, options.cwd, mode, sessionCost) });
+      if (command.name === 'status') append({ kind: 'system', title: 'status', body: statusLine(config, session, tools, usage, options.cwd, mode, sessionCost), timestamp: formatTimestamp() });
 
       if (command.name === 'mode') {
         const target = command.args[0];
         if (target === 'plan' || target === 'agent' || target === 'yolo') {
           setMode(target);
+          setSandbox(defaultSandboxForMode(target));
           if (target === 'yolo') alwaysApproveRef.current = true;
-          append({ kind: 'system', title: 'Mode', body: `Switched to ${modeIndicator(target)}` });
+          append({ kind: 'system', title: 'mode', body: `Switched to ${modeIndicator(target)}`, timestamp: formatTimestamp() });
         } else {
-          append({ kind: 'system', title: 'Mode', body: `Current: ${modeIndicator(mode)}\nUsage: /mode [plan|agent|yolo]\n  plan  — Read-only investigation\n  agent — Interactive with approval\n  yolo  — Fully autonomous` });
+          append({ kind: 'system', title: 'mode', body: `Current: ${modeIndicator(mode)}\nUsage: /mode [plan|agent|yolo]`, timestamp: formatTimestamp() });
         }
       }
       if (command.name === 'compact') {
         setSession((current) => {
           const compacted = compactMessages(current.messages);
-          append({ kind: 'system', title: 'Compact', body: `Compacted ${current.messages.length} → ${compacted.length} messages` });
+          append({ kind: 'system', title: 'compact', body: `Compacted ${current.messages.length} → ${compacted.length} messages`, timestamp: formatTimestamp() });
           return { ...current, messages: compacted, updatedAt: new Date().toISOString() };
         });
       }
       if (command.name === 'diff') {
         try {
           const diff = execSync('git diff --stat --patch', { cwd: options.cwd, encoding: 'utf8', timeout: 10_000 });
-          append({ kind: 'diff', title: 'Workspace Diff', body: diff ? formatDiffOutput(diff) : 'No changes detected' });
+          append({ kind: 'diff', title: 'workspace diff', body: diff || 'No changes detected', timestamp: formatTimestamp() });
         } catch {
-          append({ kind: 'error', title: 'Diff', body: 'Not a git repository or git not available' });
+          append({ kind: 'error', title: 'diff', body: 'Not a git repository or git not available', timestamp: formatTimestamp() });
         }
       }
       if (command.name === 'doctor') {
         void runDiagnostics(config, options.cwd)
-          .then((results) => append({ kind: 'system', title: 'Diagnostics', body: formatDiagnostics(results) }))
-          .catch((error: unknown) => append({ kind: 'error', title: 'Doctor', body: errorMessage(error) }));
+          .then((results) => append({ kind: 'system', title: 'diagnostics', body: formatDiagnostics(results), timestamp: formatTimestamp() }))
+          .catch((error: unknown) => append({ kind: 'error', title: 'doctor', body: errorMessage(error) }));
       }
       if (command.name === 'memory') {
         const note = command.args.join(' ');
         if (note) {
           void addMemoryNote(note, options.cwd)
-            .then((mem) => append({ kind: 'system', title: 'Memory', body: `Saved note #${mem.id}: ${note}` }))
-            .catch((error: unknown) => append({ kind: 'error', title: 'Memory', body: errorMessage(error) }));
+            .then((mem) => append({ kind: 'system', title: 'memory', body: `Saved note ${mem.id}: ${note}`, timestamp: formatTimestamp() }))
+            .catch((error: unknown) => append({ kind: 'error', title: 'memory', body: errorMessage(error) }));
         } else {
           void listMemoryNotes(options.cwd)
             .then((notes) => {
-              if (notes.length === 0) {
-                append({ kind: 'system', title: 'Memory', body: 'No memory notes. Usage: /memory <note text>' });
-              } else {
-                append({ kind: 'system', title: 'Memory', body: notes.map((n) => `#${n.id} [${n.scope}] ${n.content}`).join('\n') });
-              }
+              if (notes.length === 0) append({ kind: 'system', title: 'memory', body: 'No memory notes. Usage: /memory <note text>', timestamp: formatTimestamp() });
+              else append({ kind: 'system', title: 'memory', body: notes.map((n) => `${n.id} [${n.scope}] ${n.content}`).join('\n'), timestamp: formatTimestamp() });
             })
-            .catch((error: unknown) => append({ kind: 'error', title: 'Memory', body: errorMessage(error) }));
+            .catch((error: unknown) => append({ kind: 'error', title: 'memory', body: errorMessage(error) }));
         }
       }
       if (command.name === 'undo') {
         try {
           const result = execSync('git checkout -- .', { cwd: options.cwd, encoding: 'utf8', timeout: 10_000 });
-          append({ kind: 'system', title: 'Undo', body: result || 'Reverted all unstaged changes' });
+          append({ kind: 'system', title: 'undo', body: result || 'Reverted all unstaged changes', timestamp: formatTimestamp() });
         } catch {
-          append({ kind: 'error', title: 'Undo', body: 'Failed to revert. Not a git repository or no changes to undo.' });
+          append({ kind: 'error', title: 'undo', body: 'Failed to revert. Not a git repository or no changes to undo.', timestamp: formatTimestamp() });
         }
       }
-      if (command.name === 'init') {
-        append({ kind: 'system', title: 'Init', body: 'Use "mimo-code config" or /config to initialize project configuration.' });
-      }
+      if (command.name === 'expand') doExpand(command.args[0], setMessages, append);
+      if (command.name === 'collapse') doCollapse(command.args[0], setMessages, append);
       if (command.name === 'bug') {
         const desc = command.args.join(' ');
-        if (desc) {
-          append({ kind: 'system', title: 'Bug Report', body: `Bug recorded: ${desc}\nPlease report at: https://github.com/KoinaAI/MiMo-CLI/issues` });
-        } else {
-          append({ kind: 'error', title: 'Bug', body: 'Usage: /bug <description>' });
-        }
+        if (desc) append({ kind: 'system', title: 'bug', body: `Bug recorded: ${desc}\nReport at: https://github.com/KoinaAI/MiMo-CLI/issues`, timestamp: formatTimestamp() });
+        else append({ kind: 'error', title: 'bug', body: 'Usage: /bug <description>', timestamp: formatTimestamp() });
       }
-      if (command.name === 'context') {
-        append({ kind: 'system', title: 'Context', body: formatContextStats(session.messages) });
-      }
+      if (command.name === 'context') append({ kind: 'system', title: 'context', body: formatContextStats(session.messages), timestamp: formatTimestamp() });
       if (command.name === 'cost') {
         const costStr = formatCost(sessionCost);
-        append({ kind: 'system', title: 'Session Cost', body: costStr || 'No cost data yet' });
+        append({ kind: 'system', title: 'session cost', body: costStr || 'No cost data yet', timestamp: formatTimestamp() });
       }
       if (command.name === 'todo') {
         const todos = getTodoStore();
-        if (todos.length === 0) {
-          append({ kind: 'system', title: 'Todo', body: 'No tasks in checklist. The agent can use todo_add to track tasks.' });
-        } else {
-          const statusIcon = (status: string) => status === 'done' ? '[x]' : status === 'in_progress' ? '[~]' : '[ ]';
-          append({ kind: 'system', title: 'Todo', body: todos.map((t) => `#${t.id} ${statusIcon(t.status)} ${t.text}`).join('\n') });
+        if (todos.length === 0) append({ kind: 'system', title: 'todo', body: 'No tasks in checklist. The agent can use todo_add to track tasks.', timestamp: formatTimestamp() });
+        else {
+          const statusIcon = (status: string) => (status === 'done' ? '[x]' : status === 'in_progress' ? '[~]' : '[ ]');
+          append({ kind: 'system', title: 'todo', body: todos.map((t) => `#${t.id} ${statusIcon(t.status)} ${t.text}`).join('\n'), timestamp: formatTimestamp() });
         }
       }
       if (command.name === 'network') {
         const subCmd = command.args[0];
         const host = command.args[1];
-        if (subCmd === 'allow' && host) {
-          allowHost(host);
-          append({ kind: 'system', title: 'Network', body: `Allowed: ${host}` });
-        } else if (subCmd === 'deny' && host) {
-          denyHost(host);
-          append({ kind: 'system', title: 'Network', body: `Denied: ${host}` });
-        } else if (subCmd === 'reset') {
-          resetNetworkPolicy();
-          append({ kind: 'system', title: 'Network', body: 'Policy reset to default (allow all)' });
-        } else {
-          append({ kind: 'system', title: 'Network Policy', body: formatNetworkPolicy() });
-        }
+        if (subCmd === 'allow' && host) { allowHost(host); append({ kind: 'system', title: 'network', body: `Allowed: ${host}`, timestamp: formatTimestamp() }); }
+        else if (subCmd === 'deny' && host) { denyHost(host); append({ kind: 'system', title: 'network', body: `Denied: ${host}`, timestamp: formatTimestamp() }); }
+        else if (subCmd === 'reset') { resetNetworkPolicy(); append({ kind: 'system', title: 'network', body: 'Policy reset to default (allow all)', timestamp: formatTimestamp() }); }
+        else append({ kind: 'system', title: 'network policy', body: formatNetworkPolicy(), timestamp: formatTimestamp() });
       }
       if (command.name === 'export') {
         const outputPath = command.args[0];
-        if (!outputPath) {
-          append({ kind: 'error', title: 'Export', body: 'Usage: /export <file-path>' });
-        } else {
+        if (!outputPath) append({ kind: 'error', title: 'export', body: 'Usage: /export <file-path>', timestamp: formatTimestamp() });
+        else {
           void exportSession(session.id, outputPath)
-            .then((filePath) => append({ kind: 'system', title: 'Exported', body: `Session exported to ${filePath}` }))
-            .catch((error: unknown) => append({ kind: 'error', title: 'Export', body: errorMessage(error) }));
+            .then((filePath) => append({ kind: 'system', title: 'exported', body: `Session exported to ${filePath}`, timestamp: formatTimestamp() }))
+            .catch((error: unknown) => append({ kind: 'error', title: 'export', body: errorMessage(error) }));
         }
       }
 
       return true;
     },
-    [append, config, exit, mode, options.cwd, session, sessionCost, tools, usage],
+    [append, config, exit, mode, options.cwd, sandbox, session, sessionCost, tools, usage],
   );
 
   const submit = useCallback(
     (value: string) => {
-      const task = value.trim();
-      if (!task || running) return;
+      const raw = value;
+      // Multi-line continuation: if the line ends with a backslash, queue it
+      // and keep the input open for more text. Otherwise concatenate and submit.
+      if (raw.endsWith('\\')) {
+        setPendingLines((prev) => [...prev, raw.slice(0, -1)]);
+        setPrompt('');
+        return;
+      }
+      const buffered = [...pendingLines, raw].join('\n');
+      const task = buffered.trim();
+      setPendingLines([]);
+      if (!task || running) {
+        setPrompt('');
+        return;
+      }
       setPrompt('');
-      // Add to input history
       if (task && !task.startsWith('/')) {
-        inputHistory.push(task);
+        setInputHistory((prev) => (prev[prev.length - 1] === task ? prev : [...prev, task]));
+        void appendInputHistory(task);
         setHistoryIndex(-1);
       }
       if (wizard) {
@@ -320,38 +406,78 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
       setStreamingText('');
       const controller = new AbortController();
       abortRef.current = controller;
-      append({ kind: 'user', title: 'You', body: task });
+      append({ kind: 'user', title: 'you', body: task, timestamp: formatTimestamp() });
       const userMessage: ChatMessage = { role: 'user', content: task };
       const history = [...session.messages];
       addSessionMessages([userMessage]);
       void agent
         .run(task, { onEvent: handleEvent, approveToolCall }, history)
-        .catch((error: unknown) => append({ kind: 'error', title: 'Error', body: errorMessage(error) }))
-        .finally(() => { setRunning(false); setStreamingText(''); abortRef.current = null; });
+        .catch((error: unknown) => append({ kind: 'error', title: 'error', body: errorMessage(error), timestamp: formatTimestamp() }))
+        .finally(() => {
+          setRunning(false);
+          setStreamingText('');
+          abortRef.current = null;
+        });
     },
-    [addSessionMessages, agent, append, approveToolCall, handleEvent, handleSlashCommand, inputHistory, running, session.messages, wizard],
+    [addSessionMessages, agent, append, approveToolCall, handleEvent, handleSlashCommand, pendingLines, running, session.messages, wizard],
   );
 
   useInput((input, key) => {
-    // Ctrl+C during run = interrupt, else exit
+    // Ctrl+C: interrupt run, else exit.
     if (key.ctrl && input === 'c') {
       if (running) {
-        // Cannot truly cancel a running promise, but we signal it
-        append({ kind: 'system', title: 'Interrupted', body: 'Attempting to stop current operation…' });
+        append({ kind: 'system', title: 'interrupted', body: 'Stopping current run.', timestamp: formatTimestamp() });
         setRunning(false);
         setStreamingText('');
         return;
       }
+      try { setRawMode(false); } catch { /* ignore */ }
       exit();
       return;
     }
-    if (key.escape && !running) exit();
-    if (approval || running) return;
-    if (key.tab) {
-      const completed = completeSlashCommand(prompt);
-      if (completed) setPrompt(completed);
+    // Esc: cancel approval (== deny). Otherwise clear pending lines, then exit when idle.
+    if (key.escape) {
+      if (approval) {
+        approval.resolve('deny');
+        setApproval(undefined);
+        return;
+      }
+      if (pendingLines.length > 0) {
+        setPendingLines([]);
+        return;
+      }
+      if (!running && !prompt) {
+        try { setRawMode(false); } catch { /* ignore */ }
+        exit();
+      }
+      return;
     }
-    // Input history: up/down arrows
+    if (approval || running) return;
+    // Ctrl+L: clear screen (== /clear).
+    if (key.ctrl && input === 'l') {
+      setMessages([{ id: Date.now(), kind: 'system', title: 'cleared', body: 'Chat cleared. Type /help for commands.', timestamp: formatTimestamp() }]);
+      return;
+    }
+    // Ctrl+U: clear current input.
+    if (key.ctrl && input === 'u') {
+      setPrompt('');
+      setPendingLines([]);
+      return;
+    }
+    // Ctrl+W: delete previous word from current input.
+    if (key.ctrl && input === 'w') {
+      setPrompt((current) => deletePreviousWord(current));
+      return;
+    }
+    // Tab: cycle through completions when there are multiple.
+    if (key.tab) {
+      const completed = completeSlashCommand(prompt, tabCycle);
+      if (completed) {
+        setPrompt(completed);
+        setTabCycle((cycle) => cycle + 1);
+      }
+      return;
+    }
     if (key.upArrow && inputHistory.length > 0) {
       const newIndex = historyIndex < 0 ? inputHistory.length - 1 : Math.max(0, historyIndex - 1);
       setHistoryIndex(newIndex);
@@ -377,33 +503,40 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
       ]
     : [];
   const suggestions = slashCommandSuggestions(prompt);
-
-  // Compact context bar for status line
   const contextBar = formatContextStats(session.messages);
+  const top = topStatusLine(config, options.cwd, mode, branch, contextBar);
+  const inputHint = pendingLines.length > 0 ? ` (line ${pendingLines.length + 1})` : '';
+  const verb = activeTool ? `${verbForTool(activeTool.name)} ${activeTool.name}…` : mode === 'plan' ? 'Analyzing…' : 'Thinking…';
+  const elapsed = activeTool ? formatDuration(now - activeTool.startedAt) : undefined;
+
+  // Refresh branch indicator when something might have changed (lazy: every input cycle).
+  if (branch === undefined) setBranch(detectBranch(options.cwd));
 
   return (
-    <Box flexDirection="column" paddingX={1}>
-      <Box flexDirection="column" minHeight={20}>
-        {messages.slice(-30).map((message) => (
-          <MessageView key={message.id} message={message} />
+    <Box flexDirection="column">
+      <Box borderStyle="round" borderColor="cyan" paddingX={1}>
+        <Text>{top}</Text>
+      </Box>
+      <Box flexDirection="column" minHeight={20} paddingX={1}>
+        {messages.slice(-50).map((message) => (
+          <TranscriptEntry key={message.id} message={message} />
         ))}
         {streamingText ? (
-          <Box flexDirection="column" marginBottom={1}>
-            <Text color="cyan" bold>✻ MiMo</Text>
+          <Box flexDirection="column">
+            <Text color="cyan" bold>▎ mimo <Text dimColor>· streaming</Text></Text>
             <Text>{renderMarkdown(streamingText)}</Text>
           </Box>
         ) : null}
         {running && !approval && !streamingText ? (
           <Text color="yellow">
-            <Spinner type="dots" /> {mode === 'plan' ? 'Analyzing…' : 'Thinking…'}
+            <Spinner type="dots" /> {verb}{elapsed ? ` ${elapsed}` : ''}
           </Text>
         ) : null}
       </Box>
       {approval ? (
-        <Box flexDirection="column" paddingX={1}>
-          <Text color="yellow">╭─ Approve tool: {approval.tool.name}</Text>
-          <Text color="yellow">│ {summarizeToolInput(approval.toolCall.input, 500)}</Text>
-          <Text color="yellow">╰─</Text>
+        <Box flexDirection="column" borderStyle="round" borderColor="yellow" paddingX={1}>
+          <Text color="yellow" bold>Approve tool: {approval.tool.name}</Text>
+          <Text color="yellow">{summarizeToolInput(approval.toolCall.input, 500)}</Text>
           <SelectInput
             items={approvalItems}
             onSelect={(item) => {
@@ -421,108 +554,145 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
           {suggestions.length > 0 ? (
             <Box flexDirection="column" paddingX={1}>
               {suggestions.map((suggestion) => (
-                <Text key={suggestion.name} dimColor>{suggestion.usage.padEnd(36)} {suggestion.description}</Text>
+                <Text key={suggestion.name} dimColor>{suggestion.usage.padEnd(40)} {suggestion.description}</Text>
               ))}
             </Box>
           ) : null}
-          <Box paddingX={1}>
-            <Text color={wizard ? 'yellow' : modeColor(mode)}>╭─{wizard ? wizardPrompt(wizard) : `${modeIcon(mode)} mimo`} </Text>
-            <TextInput value={prompt} onChange={setPrompt} onSubmit={submit} placeholder="message MiMo, /help, Tab complete" />
+          {pendingLines.length > 0 ? (
+            <Box flexDirection="column" paddingX={1}>
+              {pendingLines.map((line, idx) => (
+                <Text key={idx} dimColor>… {line}</Text>
+              ))}
+            </Box>
+          ) : null}
+          <Box borderStyle="round" borderColor={wizard ? 'yellow' : modeBorderColor(mode)} paddingX={1}>
+            <Text color={wizard ? 'yellow' : modeBorderColor(mode)}>{wizard ? wizardPrompt(wizard) : `▎ ${mode}${inputHint}`} </Text>
+            <TextInput value={prompt} onChange={setPrompt} onSubmit={submit} placeholder="message MiMo · /help · Tab completes · \\ continues line" />
           </Box>
-          <Box paddingX={1} justifyContent="space-between">
-            <Text color={wizard ? 'yellow' : modeColor(mode)}>╰─ </Text>
-            <Text dimColor>{contextBar}{alwaysApprove ? ' · auto-approve' : ''}{options.dryRun ? ' · dry-run' : ''} · {config.model}</Text>
+          <Box paddingX={1}>
+            <Text dimColor>
+              {alwaysApprove ? 'auto-approve · ' : ''}{options.dryRun ? 'dry-run · ' : ''}{describeSandbox(sandbox)} · {config.model}
+            </Text>
           </Box>
         </Box>
       )}
       {wizard ? <Text color="yellow">{wizard.error ? `Error: ${wizard.error}` : wizard.step === 'review' ? wizardSummary(wizard) : 'back / cancel / save'}</Text> : null}
-      <Text dimColor>Enter send · Tab complete · ↑↓ history · Esc quit · Ctrl+C {running ? 'interrupt' : 'quit'} · /help commands</Text>
+      <Text dimColor>Enter send · Tab cycle · ↑↓ history · Ctrl+L clear · Ctrl+U reset · Ctrl+W delete word · Esc {approval ? 'deny' : pendingLines.length ? 'reset' : 'quit'}</Text>
     </Box>
   );
+}
+
+function modeBorderColor(mode: InteractionMode): 'cyan' | 'blue' | 'red' {
+  if (mode === 'plan') return 'blue';
+  if (mode === 'yolo') return 'red';
+  return 'cyan';
+}
+
+function deletePreviousWord(input: string): string {
+  if (!input) return input;
+  const trimmed = input.replace(/\s+$/, '');
+  const idx = trimmed.search(/\s\S*$/);
+  if (idx === -1) return '';
+  return input.slice(0, idx + 1);
+}
+
+function detectBranch(cwd: string): string | undefined {
+  try {
+    const branch = execSync('git rev-parse --abbrev-ref HEAD', { cwd, encoding: 'utf8', timeout: 1500 }).trim();
+    return branch || undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 async function handleWizardInput(
   task: string,
   wizard: ConfigWizard,
   setWizard: React.Dispatch<React.SetStateAction<ConfigWizard | undefined>>,
-  append: (message: Omit<TuiMessage, 'id'>) => void,
+  append: (message: Omit<TranscriptMessage, 'id'>) => void,
 ): Promise<void> {
   if (wizard.step === 'review' && task === 'save') {
     const filePath = await saveWizardConfig(wizard);
     setWizard(undefined);
-    append({ kind: 'system', title: 'Config saved', body: `${filePath}\nRestart TUI to reload runtime config.` });
+    append({ kind: 'system', title: 'config saved', body: `${filePath}\nRestart TUI to reload runtime config.`, timestamp: formatTimestamp() });
     return;
   }
   const nextWizard = updateWizard(wizard, task);
   setWizard(nextWizard.error?.startsWith('Cancelled') ? undefined : nextWizard);
-  if (nextWizard.error?.startsWith('Cancelled')) append({ kind: 'system', title: 'Config', body: nextWizard.error });
+  if (nextWizard.error?.startsWith('Cancelled')) append({ kind: 'system', title: 'config', body: nextWizard.error, timestamp: formatTimestamp() });
 }
 
-async function loadSession(
+async function doLoadSession(
   prefix: string | undefined,
   setSession: React.Dispatch<React.SetStateAction<SessionRecord>>,
-  append: (message: Omit<TuiMessage, 'id'>) => void,
+  append: (message: Omit<TranscriptMessage, 'id'>) => void,
 ): Promise<void> {
   if (!prefix) {
-    append({ kind: 'error', title: 'Load session', body: 'Usage: /load <session-id-prefix>' });
+    append({ kind: 'error', title: 'load session', body: 'Usage: /load <session-id-prefix>', timestamp: formatTimestamp() });
     return;
   }
   const sessions = await listSessions();
   const match = sessions.find((candidate) => candidate.id.startsWith(prefix));
   if (!match) {
-    append({ kind: 'error', title: 'Load session', body: `No session starts with ${prefix}` });
+    append({ kind: 'error', title: 'load session', body: `No session starts with ${prefix}`, timestamp: formatTimestamp() });
     return;
   }
   const loaded = await readSession(match.id);
   setSession(loaded);
-  append({ kind: 'system', title: 'Session loaded', body: `${loaded.title}\n${loaded.id}\nmessages=${loaded.messages.length}` });
+  append({ kind: 'system', title: 'session loaded', body: `${loaded.title}\n${loaded.id}\nmessages=${loaded.messages.length}`, timestamp: formatTimestamp() });
+}
+
+async function doResumeSession(
+  setSession: React.Dispatch<React.SetStateAction<SessionRecord>>,
+  append: (message: Omit<TranscriptMessage, 'id'>) => void,
+): Promise<void> {
+  try {
+    const sessions = await listSessions();
+    if (sessions.length === 0) {
+      append({ kind: 'system', title: 'resume', body: 'No saved sessions to resume.', timestamp: formatTimestamp() });
+      return;
+    }
+    const latest = sessions[0];
+    if (!latest) return;
+    setSession(latest);
+    append({ kind: 'system', title: 'resumed', body: `${latest.title}\n${latest.id}\nmessages=${latest.messages.length}`, timestamp: formatTimestamp() });
+  } catch (error) {
+    append({ kind: 'error', title: 'resume', body: errorMessage(error), timestamp: formatTimestamp() });
+  }
+}
+
+function doExpand(
+  arg: string | undefined,
+  setMessages: React.Dispatch<React.SetStateAction<TranscriptMessage[]>>,
+  append: (message: Omit<TranscriptMessage, 'id'>) => void,
+): void {
+  setMessages((prev) => updateCollapse(prev, arg, false));
+  if (!arg) append({ kind: 'system', title: 'expand', body: 'Usage: /expand <#index|all>', timestamp: formatTimestamp() });
+}
+
+function doCollapse(
+  arg: string | undefined,
+  setMessages: React.Dispatch<React.SetStateAction<TranscriptMessage[]>>,
+  append: (message: Omit<TranscriptMessage, 'id'>) => void,
+): void {
+  setMessages((prev) => updateCollapse(prev, arg, true));
+  if (!arg) append({ kind: 'system', title: 'collapse', body: 'Usage: /collapse <#index|all>', timestamp: formatTimestamp() });
+}
+
+function updateCollapse(messages: TranscriptMessage[], arg: string | undefined, collapsed: boolean): TranscriptMessage[] {
+  if (!arg) return messages;
+  if (arg === 'all') return messages.map((message) => (message.index !== undefined ? { ...message, collapsed } : message));
+  const index = Number(arg.replace(/^#/, ''));
+  if (Number.isNaN(index)) return messages;
+  return messages.map((message) => (message.index === index ? { ...message, collapsed } : message));
 }
 
 function formatSessions(sessions: SessionRecord[]): string {
   if (sessions.length === 0) return 'No saved sessions';
-  return sessions.map((session) => `${session.id.slice(0, 8)}  ${session.updatedAt}  ${session.title}  (${session.messages.length} messages)`).join('\n');
+  return sessions
+    .map((s) => `${s.id.slice(0, 8)}  ${s.updatedAt}  ${s.title}  (${s.messages.length} messages)`)
+    .join('\n');
 }
 
-function MessageView({ message }: { message: TuiMessage }): React.ReactElement {
-  const color = colorForKind(message.kind);
-  const prefix = prefixForKind(message.kind);
-  const ts = message.timestamp ? ` ${message.timestamp}` : '';
-  return (
-    <Box flexDirection="column" marginBottom={1}>
-      <Text color={color} bold>{prefix} {message.title}<Text dimColor>{ts}</Text></Text>
-      <Text>{message.body}<Newline /></Text>
-    </Box>
-  );
-}
-
-function colorForKind(kind: TuiMessage['kind']): 'gray' | 'green' | 'cyan' | 'yellow' | 'red' | 'blue' | 'magenta' {
-  if (kind === 'system') return 'gray';
-  if (kind === 'user') return 'green';
-  if (kind === 'assistant') return 'cyan';
-  if (kind === 'tool') return 'yellow';
-  if (kind === 'thinking') return 'gray';
-  if (kind === 'diff') return 'magenta';
-  return 'red';
-}
-
-function prefixForKind(kind: TuiMessage['kind']): string {
-  if (kind === 'user') return '>';
-  if (kind === 'assistant') return '✻';
-  if (kind === 'tool') return '⏺';
-  if (kind === 'error') return '✖';
-  if (kind === 'thinking') return '💭';
-  if (kind === 'diff') return '±';
-  return '•';
-}
-
-function modeColor(mode: InteractionMode): 'cyan' | 'blue' | 'red' {
-  if (mode === 'plan') return 'blue';
-  if (mode === 'yolo') return 'red';
-  return 'cyan';
-}
-
-function modeIcon(mode: InteractionMode): string {
-  if (mode === 'plan') return '🔍';
-  if (mode === 'yolo') return '⚡';
-  return '🤖';
-}
+const _appendKinds: TranscriptKind[] = ['system', 'user', 'assistant', 'tool_call', 'tool_result', 'thinking', 'diff', 'error'];
+void _appendKinds;

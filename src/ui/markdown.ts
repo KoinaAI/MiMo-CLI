@@ -1,9 +1,13 @@
 import chalk from 'chalk';
+import { highlightCode } from './syntax.js';
 
 /**
  * Lightweight terminal Markdown renderer.
- * Handles: headers, bold, italic, inline code, code blocks,
- * bullet/numbered lists, horizontal rules, links, and blockquotes.
+ *
+ * Handles: headers, bold, italic, inline code, code blocks (with optional
+ * syntax highlighting), bullet/numbered lists, horizontal rules, links, and
+ * blockquotes. Aimed at producing Codex/Claude-Code-style output without
+ * pulling in a heavy markdown engine.
  */
 export function renderMarkdown(text: string): string {
   const lines = text.split('\n');
@@ -11,6 +15,16 @@ export function renderMarkdown(text: string): string {
   let inCodeBlock = false;
   let codeLang = '';
   const codeLines: string[] = [];
+
+  const flushCodeBlock = (): void => {
+    const lang = codeLang || 'code';
+    output.push(chalk.dim(`  ┌── ${lang} ${'─'.repeat(Math.max(2, 32 - lang.length))}`));
+    const highlighted = codeLang ? highlightCode(codeLines.join('\n'), codeLang) : codeLines.join('\n');
+    for (const codeLine of highlighted.split('\n')) {
+      output.push(chalk.dim('  │ ') + codeLine);
+    }
+    output.push(chalk.dim('  └' + '─'.repeat(36)));
+  };
 
   for (const line of lines) {
     // Code block toggle
@@ -20,17 +34,12 @@ export function renderMarkdown(text: string): string {
         codeLang = line.trimStart().slice(3).trim();
         codeLines.length = 0;
         continue;
-      } else {
-        inCodeBlock = false;
-        const header = codeLang ? chalk.dim(`  ─── ${codeLang} ───`) : chalk.dim('  ─── code ───');
-        output.push(header);
-        for (const codeLine of codeLines) {
-          output.push(chalk.gray(`  │ `) + chalk.white(codeLine));
-        }
-        output.push(chalk.dim('  ───────────'));
-        codeLang = '';
-        continue;
       }
+      flushCodeBlock();
+      inCodeBlock = false;
+      codeLang = '';
+      codeLines.length = 0;
+      continue;
     }
 
     if (inCodeBlock) {
@@ -53,65 +62,56 @@ export function renderMarkdown(text: string): string {
 
     // Horizontal rule
     if (/^[-*_]{3,}\s*$/.test(line)) {
-      output.push(chalk.dim('  ────────────────────────'));
+      output.push(chalk.dim('  ' + '─'.repeat(36)));
       continue;
     }
 
     // Blockquote
     if (line.trimStart().startsWith('> ')) {
       const quoted = line.replace(/^>\s?/, '');
-      output.push(chalk.gray('  │ ') + chalk.italic(renderInline(quoted)));
+      output.push(chalk.gray('  ▎ ') + chalk.italic(renderInline(quoted)));
       continue;
     }
 
     // Bullet list
     const bulletMatch = line.match(/^(\s*)[*\-+] (.+)/);
     if (bulletMatch) {
-      const indent = '  ' + bulletMatch[1];
-      output.push(`${indent}${chalk.dim('•')} ${renderInline(bulletMatch[2] ?? '')}`);
+      const indent = '  ' + (bulletMatch[1] ?? '');
+      output.push(`${indent}${chalk.cyan('•')} ${renderInline(bulletMatch[2] ?? '')}`);
       continue;
     }
 
     // Numbered list
     const numMatch = line.match(/^(\s*)\d+\.\s(.+)/);
     if (numMatch) {
-      const indent = '  ' + numMatch[1];
+      const indent = '  ' + (numMatch[1] ?? '');
       const numText = line.match(/^\s*(\d+)\./);
       const num = numText ? numText[1] : '1';
-      output.push(`${indent}${chalk.dim(`${num}.`)} ${renderInline(numMatch[2] ?? '')}`);
+      output.push(`${indent}${chalk.cyan(`${num}.`)} ${renderInline(numMatch[2] ?? '')}`);
       continue;
     }
 
-    // Empty line
     if (line.trim() === '') {
       output.push('');
       continue;
     }
 
-    // Regular text with inline formatting
     output.push(`  ${renderInline(line)}`);
   }
 
-  // Handle unclosed code blocks
+  // Handle unclosed code blocks gracefully
   if (inCodeBlock && codeLines.length > 0) {
-    output.push(chalk.dim(`  ─── ${codeLang || 'code'} ───`));
-    for (const codeLine of codeLines) {
-      output.push(chalk.gray(`  │ `) + chalk.white(codeLine));
-    }
-    output.push(chalk.dim('  ───────────'));
+    flushCodeBlock();
   }
 
   return output.join('\n');
 }
 
-/**
- * Render inline Markdown formatting: bold, italic, code, links, strikethrough.
- */
 function renderInline(text: string): string {
   let result = text;
 
-  // Inline code (must be before bold/italic to avoid conflicts)
-  result = result.replace(/`([^`]+)`/g, (_, code: string) => chalk.bgGray.white(` ${code} `));
+  // Inline code first to protect from other markup
+  result = result.replace(/`([^`]+)`/g, (_, code: string) => chalk.cyan(`\`${code}\``));
 
   // Bold + italic
   result = result.replace(/\*\*\*(.+?)\*\*\*/g, (_, t: string) => chalk.bold.italic(t));
@@ -122,7 +122,7 @@ function renderInline(text: string): string {
 
   // Italic
   result = result.replace(/\*(.+?)\*/g, (_, t: string) => chalk.italic(t));
-  result = result.replace(/_(.+?)_/g, (_, t: string) => chalk.italic(t));
+  result = result.replace(/(^|[\s(])_(.+?)_(?=[\s).,;:]|$)/g, (_, lead: string, t: string) => `${lead}${chalk.italic(t)}`);
 
   // Strikethrough
   result = result.replace(/~~(.+?)~~/g, (_, t: string) => chalk.strikethrough(t));

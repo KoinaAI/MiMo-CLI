@@ -7,6 +7,7 @@ export type SlashCommandName =
   | 'save'
   | 'mcp'
   | 'skill'
+  | 'skills'
   | 'hooks'
   | 'tools'
   | 'status'
@@ -18,6 +19,11 @@ export type SlashCommandName =
   | 'memory'
   | 'undo'
   | 'init'
+  | 'resume'
+  | 'agents'
+  | 'expand'
+  | 'collapse'
+  | 'sandbox'
   | 'bug'
   | 'context'
   | 'mode'
@@ -40,14 +46,19 @@ export interface SlashCommand {
 export const SLASH_COMMANDS: SlashCommandSpec[] = [
   { name: 'help', usage: '/help', description: 'Show commands and shortcuts' },
   { name: 'config', usage: '/config', description: 'Run full TUI config wizard' },
+  { name: 'init', usage: '/init', description: 'Scaffold .mimo-code.json + AGENTS.md for the project' },
   { name: 'sessions', usage: '/sessions', description: 'List reusable sessions' },
   { name: 'new', usage: '/new [title]', description: 'Start a new reusable session' },
   { name: 'load', usage: '/load <session-id-prefix>', description: 'Load a saved session' },
+  { name: 'resume', usage: '/resume', description: 'Resume the most recently saved session' },
   { name: 'save', usage: '/save', description: 'Save current session' },
   { name: 'mcp', usage: '/mcp', description: 'Show configured MCP servers' },
   { name: 'skill', usage: '/skill', description: 'Show configured skills' },
+  { name: 'skills', usage: '/skills', description: 'Discover skills from .mimo/skills and ~/.mimo-code/skills' },
   { name: 'hooks', usage: '/hooks', description: 'Show configured hooks' },
   { name: 'tools', usage: '/tools', description: 'Show all available built-in and MCP tools' },
+  { name: 'agents', usage: '/agents', description: 'List named subagents from .mimo/agents/*.md' },
+  { name: 'sandbox', usage: '/sandbox [read-only|workspace-write|danger-full-access]', description: 'Show or set the sandbox level' },
   { name: 'status', usage: '/status', description: 'Show runtime model/session/status details' },
   { name: 'clear', usage: '/clear', description: 'Clear visible TUI messages' },
   { name: 'exit', usage: '/exit', description: 'Exit TUI' },
@@ -56,7 +67,8 @@ export const SLASH_COMMANDS: SlashCommandSpec[] = [
   { name: 'doctor', usage: '/doctor', description: 'Run diagnostic checks on configuration and tools' },
   { name: 'memory', usage: '/memory [note]', description: 'Add or list persistent memory notes' },
   { name: 'undo', usage: '/undo', description: 'Undo last file change (git checkout)' },
-  { name: 'init', usage: '/init', description: 'Detect project type and generate .mimo-code.json config' },
+  { name: 'expand', usage: '/expand <#index|all>', description: 'Expand a collapsed transcript block' },
+  { name: 'collapse', usage: '/collapse <#index|all>', description: 'Collapse a transcript block' },
   { name: 'bug', usage: '/bug <description>', description: 'Report a bug or issue' },
   { name: 'context', usage: '/context', description: 'Show current context window usage' },
   { name: 'mode', usage: '/mode [plan|agent|yolo]', description: 'Switch interaction mode' },
@@ -66,7 +78,7 @@ export const SLASH_COMMANDS: SlashCommandSpec[] = [
   { name: 'export', usage: '/export <path>', description: 'Export current session to a JSON file' },
 ];
 
-export const SLASH_COMMAND_HELP = SLASH_COMMANDS.map((command) => `${command.usage.padEnd(32)} ${command.description}`).join('\n');
+export const SLASH_COMMAND_HELP = SLASH_COMMANDS.map((command) => `${command.usage.padEnd(40)} ${command.description}`).join('\n');
 
 export function parseSlashCommand(input: string): SlashCommand | undefined {
   const trimmed = input.trim();
@@ -77,20 +89,30 @@ export function parseSlashCommand(input: string): SlashCommand | undefined {
   return undefined;
 }
 
-export function completeSlashCommand(input: string): string | undefined {
+/**
+ * Tab completion. When there is exactly one match, complete it. When there
+ * are multiple matches and an `index` is supplied, cycle through them so
+ * pressing Tab repeatedly walks the suggestion list.
+ */
+export function completeSlashCommand(input: string, cycleIndex = 0): string | undefined {
   const trimmed = input.trim();
   if (!trimmed.startsWith('/')) return undefined;
   const prefix = trimmed.slice(1);
   const matches = SLASH_COMMANDS.filter((command) => command.name.startsWith(prefix));
-  const match = matches[0];
-  return matches.length === 1 && match ? `/${match.name} ` : undefined;
+  if (matches.length === 0) return undefined;
+  if (matches.length === 1) {
+    const match = matches[0];
+    return match ? `/${match.name} ` : undefined;
+  }
+  const wrapped = matches[cycleIndex % matches.length];
+  return wrapped ? `/${wrapped.name}` : undefined;
 }
 
 export function slashCommandSuggestions(input: string): SlashCommandSpec[] {
   const trimmed = input.trim();
   if (!trimmed.startsWith('/')) return [];
   const prefix = trimmed.slice(1);
-  return SLASH_COMMANDS.filter((command) => command.name.startsWith(prefix)).slice(0, 6);
+  return SLASH_COMMANDS.filter((command) => command.name.startsWith(prefix)).slice(0, 8);
 }
 
 function isSlashCommandName(value: string): value is SlashCommandName {

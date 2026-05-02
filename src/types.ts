@@ -65,6 +65,7 @@ export interface AgentOptions {
   maxIterations: number;
   autoApprove: boolean;
   mode?: InteractionMode | undefined;
+  sandbox?: SandboxLevel | undefined;
 }
 
 export interface AgentResult {
@@ -137,7 +138,17 @@ export interface SessionRecord {
   messages: ChatMessage[];
 }
 
-export type HookEvent = 'session_start' | 'user_prompt' | 'before_tool' | 'after_tool' | 'agent_done';
+export type HookEvent =
+  | 'session_start'
+  | 'user_prompt'
+  | 'before_tool'
+  | 'pre_tool_use'
+  | 'after_tool'
+  | 'post_tool_use'
+  | 'notification'
+  | 'stop'
+  | 'agent_done'
+  | 'subagent_done';
 
 export interface HookConfig {
   name: string;
@@ -146,6 +157,13 @@ export interface HookConfig {
   args?: string[];
   env?: Record<string, string>;
   enabled?: boolean;
+  /**
+   * Optional matcher: if set, only run when payload.toolName matches.
+   * Used by tool-scoped hooks (e.g. only run on `run_shell`).
+   */
+  matcher?: string;
+  /** Per-hook timeout in ms. Defaults to 30s. */
+  timeoutMs?: number;
 }
 
 export interface HookPayload {
@@ -155,7 +173,22 @@ export interface HookPayload {
   toolInput?: Record<string, unknown>;
   toolOutput?: string;
   finalMessage?: string;
+  notification?: string;
+  /** Set by the host when the agent loop is stopping. */
+  reason?: string;
 }
+
+/**
+ * Sandbox levels that constrain destructive tool use.
+ *
+ * - `read-only`: only readOnly tools are allowed.
+ * - `workspace-write`: writes are confined to the workspace and shell
+ *   commands cannot leave it; network is restricted to the configured
+ *   network policy.
+ * - `danger-full-access`: no sandbox restrictions (use with care, matches
+ *   YOLO mode semantics).
+ */
+export type SandboxLevel = 'read-only' | 'workspace-write' | 'danger-full-access';
 
 export interface MemoryNote {
   id: string;

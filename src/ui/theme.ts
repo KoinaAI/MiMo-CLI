@@ -2,15 +2,18 @@ import chalk from 'chalk';
 import { formatUsage, formatCost } from '../agent/usage.js';
 import type { CostEstimate, InteractionMode, RuntimeConfig, SessionRecord, ToolDefinition, TokenUsage } from '../types.js';
 
+/**
+ * The splash banner shown when the TUI launches. Aimed at a Codex/Claude-Code
+ * feel: a tight boxed mark, the product name, and a single tagline. The
+ * branding tagline `Intelligent Coding Agent` is asserted by tests.
+ */
 export const SPLASH = [
+  chalk.cyan('  ╭──────────────────────────────╮'),
+  chalk.cyan('  │  ') + chalk.bold.white('M I M O') + chalk.cyan('   ') + chalk.gray('Code CLI') + chalk.cyan('       │'),
+  chalk.cyan('  │  ') + chalk.dim('Intelligent Coding Agent') + chalk.cyan('    │'),
+  chalk.cyan('  ╰──────────────────────────────╯'),
   '',
-  chalk.cyan('  __  __ _ __  __        ____          _      '),
-  chalk.cyan(' |  \\/  (_)  \\/  | ___  / ___|___   __| | ___ '),
-  chalk.cyan(' | |\\/| | | |\\/| |/ _ \\| |   / _ \\ / _` |/ _ \\'),
-  chalk.cyan(' | |  | | | |  | | (_) | |__| (_) | (_| |  __/'),
-  chalk.cyan(' |_|  |_|_|_|  |_|\\___/ \\____\\___/ \\__,_|\\___|'),
-  '',
-  chalk.gray('  Intelligent Coding Agent — Type /help for commands'),
+  chalk.gray('  /help · /mode · /init · /resume · Tab completes · Ctrl+C interrupts'),
   '',
 ].join('\n');
 
@@ -49,8 +52,7 @@ export function statusLine(
 
 export function formatThinkingBlock(text: string): string {
   const lines = text.split('\n');
-  const formatted = lines.map((line) => chalk.gray.italic(`  💭 ${line}`)).join('\n');
-  return formatted;
+  return lines.map((line) => chalk.gray.italic(`  💭 ${line}`)).join('\n');
 }
 
 export function formatToolCallHeader(name: string, input: Record<string, unknown>): string {
@@ -60,13 +62,15 @@ export function formatToolCallHeader(name: string, input: Record<string, unknown
       return `${key}=${v}`;
     })
     .join(', ');
-  return chalk.yellow(`  ⚡ ${name}`) + chalk.gray(`(${inputSummary})`);
+  return chalk.yellow(`  ⏵ ${name}`) + chalk.gray(`(${inputSummary})`);
 }
 
 export function formatToolResult(name: string, content: string): string {
   const lines = content.split('\n');
-  const truncated = lines.length > 20 ? [...lines.slice(0, 18), chalk.gray(`  ... (${lines.length - 18} more lines)`)].join('\n') : content;
-  return chalk.gray(`  ← ${name}: `) + truncated;
+  const truncated = lines.length > 20
+    ? [...lines.slice(0, 18), chalk.gray(`  ... (${lines.length - 18} more lines)`)].join('\n')
+    : content;
+  return chalk.gray(`  ↪ ${name}: `) + truncated;
 }
 
 export function formatDiffOutput(diff: string): string {
@@ -88,10 +92,79 @@ export function modeIndicator(mode: InteractionMode): string {
   return `${icons[mode]} ${MODE_LABELS[mode]}`;
 }
 
-function shortenPath(cwd: string): string {
+/**
+ * Map a tool name to a short verb describing what it does. Used by the live
+ * status indicator so the spinner reads "Reading...", "Editing...", etc.
+ */
+export function verbForTool(toolName: string): string {
+  const map: Record<string, string> = {
+    read_file: 'Reading',
+    read_many_files: 'Reading',
+    list_files: 'Listing',
+    search_text: 'Searching',
+    file_search: 'Searching',
+    glob: 'Searching',
+    web_fetch: 'Fetching',
+    web_search: 'Searching',
+    write_file: 'Writing',
+    edit_file: 'Editing',
+    multi_edit: 'Editing',
+    apply_patch: 'Patching',
+    run_shell: 'Running',
+    git_status: 'Inspecting',
+    git_diff: 'Diffing',
+    git_log: 'Inspecting',
+    git_commit: 'Committing',
+    git_blame: 'Inspecting',
+    todo_add: 'Planning',
+    todo_update: 'Planning',
+    todo_list: 'Planning',
+    sub_agent: 'Delegating',
+    ask_user: 'Asking',
+  };
+  if (map[toolName]) return map[toolName] ?? 'Working';
+  if (toolName.startsWith('mcp__')) return 'Calling';
+  if (toolName.startsWith('agent_')) return 'Delegating';
+  return 'Working';
+}
+
+/** Restrained sigils for transcript line prefixes. Avoids emoji clutter. */
+export const SIGILS = {
+  user: chalk.green('▎'),
+  assistant: chalk.cyan('▎'),
+  thinking: chalk.gray('▎'),
+  tool: chalk.yellow('⏵'),
+  toolResult: chalk.gray('↪'),
+  system: chalk.gray('•'),
+  error: chalk.red('✖'),
+  diff: chalk.magenta('±'),
+};
+
+export function shortenPath(cwd: string): string {
   const home = process.env.HOME ?? '';
   if (home && cwd.startsWith(home)) {
     return `~${cwd.slice(home.length)}`;
   }
   return cwd;
+}
+
+/**
+ * Compact top-bar summary used by the TUI's persistent status row.
+ */
+export function topStatusLine(
+  config: RuntimeConfig,
+  cwd: string,
+  mode: InteractionMode,
+  branch: string | undefined,
+  contextSummary: string,
+): string {
+  const parts = [
+    chalk.bold.cyan('MiMo'),
+    MODE_LABELS[mode],
+    chalk.yellow(config.model),
+    chalk.gray(shortenPath(cwd)),
+  ];
+  if (branch) parts.push(chalk.magenta(`⎇ ${branch}`));
+  if (contextSummary) parts.push(chalk.gray(contextSummary));
+  return parts.join(chalk.dim(' · '));
 }
