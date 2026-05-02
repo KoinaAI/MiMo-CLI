@@ -235,21 +235,26 @@ export MIMO_API_FORMAT="openai"
 mimo-code
 ```
 
-默认进入 Claude Code 风格无边框全屏 TUI。界面包含：
+默认进入 Codex / Claude Code 风格的全屏 TUI。界面包含：
 
-- 开屏：MiMo Code ASCII welcome，提示 `/help` 与 Tab 补全。
-- 会话区：用户消息、MiMo 回复、工具调用与工具结果。
-- 底部输入区：`╭─mimo` 输入框、`╰─` 状态行，展示模型、API 格式、max token、工具数量、MCP/Skill/Hook 数量、会话 ID、工作区与 token usage。
+- 顶部状态栏：模型 · 模式 · cwd · git 分支 · 上下文用量。
+- 开屏 splash 与命令提示。
+- 会话区：用户消息、MiMo 回复、思考块、工具调用、工具结果（可折叠），diff 输出自动以 ± 着色渲染。
+- 底部输入框：根据模式自动着色边框（plan = 蓝、agent = 青、yolo = 红），下方显示沙箱级别、模型、auto-approve 等状态。
 - 审批区：写文件、编辑文件、运行 shell 命令前可选择 Approve once / Always approve this session / Deny。
 
 快捷键：
 
 | 快捷键 | 说明 |
 | --- | --- |
-| Enter | 发送当前任务 |
-| Tab | 补全唯一匹配的 slash command |
-| Esc | 退出 TUI |
-| Ctrl+C | 退出 TUI |
+| Enter | 发送当前任务（行尾 `\` 换行继续输入） |
+| Tab | 循环补全 slash 命令 |
+| ↑ / ↓ | 浏览输入历史（持久化在 `~/.mimo-code/history`） |
+| Ctrl+L | 清空当前消息流 |
+| Ctrl+U | 清空当前输入 |
+| Ctrl+W | 删除前一个单词 |
+| Esc | 取消审批 / 清空续行 / 空闲时退出 |
+| Ctrl+C | 中断当前运行 / 退出 |
 
 Slash commands：
 
@@ -257,17 +262,104 @@ Slash commands：
 | --- | --- |
 | `/help` | 显示命令帮助 |
 | `/config` | 在 TUI 内运行完整配置向导 |
+| `/init` | 在当前项目创建 `.mimo-code.json`、`AGENTS.md`、示例 skill 与示例 subagent |
 | `/sessions` | 列出已保存会话 |
 | `/new [title]` | 开始一个新的可复用会话 |
 | `/load <session-id-prefix>` | 加载保存过的会话 |
+| `/resume` | 恢复最近保存的会话 |
 | `/save` | 保存当前会话到 `~/.mimo-code/sessions/` |
 | `/mcp` | 显示当前 MCP server 配置 |
-| `/skill` | 显示当前 Skill 配置 |
+| `/skill` | 显示配置文件里声明的 skill |
+| `/skills` | 自动发现 `.mimo/skills/*.md` 与 `~/.mimo-code/skills/*.md` |
+| `/agents` | 列出 `.mimo/agents/*.md` 中的命名 subagent |
+| `/sandbox [level]` | 查看或切换沙箱：`read-only` / `workspace-write` / `danger-full-access` |
 | `/hooks` | 显示当前 Hook 配置 |
 | `/tools` | 显示内置工具与 MCP tools |
+| `/expand <#index\|all>` / `/collapse <#index\|all>` | 展开 / 折叠工具结果块 |
+| `/diff` | 显示工作区 git diff |
+| `/doctor` | 运行配置诊断 |
+| `/memory [note]` | 添加或列出持久 memory note |
+| `/undo` | git checkout 撤销当前修改 |
+| `/compact` | 总结历史以降低上下文压力 |
+| `/context` | 显示当前上下文窗口用量 |
+| `/cost` | 显示当前会话累计费用估算 |
+| `/todo` | 显示 agent 任务清单 |
+| `/network [allow\|deny <host>]` | 查看或设置网络白名单/黑名单 |
+| `/export <path>` | 导出当前会话到 JSON |
+| `/mode [plan\|agent\|yolo]` | 切换交互模式（自动调整沙箱） |
 | `/status` | 显示运行时模型、会话、工具与 token 状态 |
 | `/clear` | 清空当前可见消息 |
 | `/exit` | 退出 TUI |
+
+### 项目结构
+
+`/init` 之后建议把以下结构纳入版本控制：
+
+```
+.mimo-code.json          # 项目级运行时配置
+AGENTS.md                # 给 agent 的项目说明（被自动注入到 system prompt）
+.mimo/
+  skills/                # `*.md` skill，YAML frontmatter 声明触发关键字
+  agents/                # `*.md` 命名 subagent，YAML frontmatter 声明工具白名单
+```
+
+#### Skills
+
+在 `.mimo/skills/` 或 `~/.mimo-code/skills/` 中放置 Markdown 文件，例如：
+
+```markdown
+---
+name: testing-discipline
+description: Reminds the agent to run tests after every change.
+triggers: [test, vitest, jest, pytest]
+always: false
+---
+
+When the user changes source code, always run the relevant test suite ...
+```
+
+`triggers` 中任一关键字（大小写不敏感）出现在用户提示里时，该 skill 会被自动注入到当前请求的 system prompt。`always: true` 表示无条件加载。
+
+#### Named Subagents
+
+在 `.mimo/agents/` 中放置 Markdown 文件，body 即为该 subagent 的 system prompt：
+
+```markdown
+---
+name: research-assistant
+description: Investigates a topic and produces a written summary.
+tools: [read_file, search_text, file_search, web_fetch]
+max_iterations: 8
+---
+
+You are a focused research assistant ...
+```
+
+主 agent 通过 `agent_dispatch` 工具按名字派发任务到 subagent。`/agents` 命令列出所有发现的 subagent。
+
+#### Sandbox
+
+CLI 在 agent 工具调用之前会按沙箱级别校验：
+
+| 级别 | 行为 |
+| --- | --- |
+| `read-only` | 只允许 `readOnly: true` 的工具（read / search / list 等）。 |
+| `workspace-write`（默认 agent 模式） | 允许写入工作区内文件；阻断绝对路径或 `..` 越界。 |
+| `danger-full-access`（yolo 模式） | 不做沙箱限制，等价于自动批准。 |
+
+`/sandbox` 命令运行时切换；`/mode` 也会同步切换默认沙箱。
+
+#### Hooks v2
+
+`hooks` 现在支持以下事件：`session_start`、`user_prompt`、`before_tool`、`pre_tool_use`、`after_tool`、`post_tool_use`、`notification`、`stop`、`agent_done`、`subagent_done`。
+
+- 所有 hook 都会收到 `MIMO_HOOK_EVENT` 与 `MIMO_HOOK_PAYLOAD` 环境变量，并通过 stdin 收到一份 JSON payload。
+- `pre_tool_use` 退出码为 `2` 时阻断当前工具调用；其它非零退出码视为软警告。
+- `matcher` 字段支持精确匹配工具名或 `prefix*` 通配，例如 `"matcher": "run_*"` 只在 shell/run 类工具上生效。
+
+#### MCP
+
+MCP stdio 服务器在 CLI 启动时一次性 spawn 并保持运行，整个会话内复用同一个进程；`process.exit` / `SIGINT` 时统一关闭。配置示例同上 `mcpServers`。
 
 可复用会话保存为 JSON 文件，路径为：
 

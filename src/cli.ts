@@ -4,13 +4,14 @@ import chalk from 'chalk';
 import { Command } from 'commander';
 import { runConsoleAgent } from './agent/console-runner.js';
 import { createSubAgentTool } from './agent/subagent.js';
+import { createNamedSubagentTool, discoverNamedSubagents } from './agent/named-subagents.js';
 import { configureInteractively } from './config/interactive.js';
 import { DEFAULT_MAX_TOKENS, DEFAULT_TEMPERATURE, SUPPORTED_MODELS } from './constants.js';
 import { loadConfig, tokenPlanBaseUrl } from './config/config.js';
 import { runHooks } from './hooks.js';
 import { createMcpTools } from './mcp/stdio.js';
 import { defaultTools } from './tools/index.js';
-import type { ApiFormat, InteractionMode, PersistedConfig } from './types.js';
+import type { ApiFormat, InteractionMode, PersistedConfig, SandboxLevel } from './types.js';
 import { errorMessage } from './utils/errors.js';
 import { runTui } from './ui/tui.js';
 
@@ -32,6 +33,7 @@ program
   .option('--max-iterations <number>', 'maximum agent/tool loop iterations (default 12)')
   .option('--no-tui', 'use prompt-based console mode instead of the full TUI')
   .option('--mode <mode>', 'interaction mode: plan, agent, or yolo (default agent)')
+  .option('--sandbox <level>', 'sandbox level: read-only, workspace-write, or danger-full-access')
   .action(async (options) => {
     await runInteractive(options);
   });
@@ -51,6 +53,7 @@ program
   .option('-y, --yes', 'auto-approve tool calls where possible', false)
   .option('--max-iterations <number>', 'maximum agent/tool loop iterations (default 12)')
   .option('--mode <mode>', 'interaction mode: plan, agent, or yolo (default agent)')
+  .option('--sandbox <level>', 'sandbox level: read-only, workspace-write, or danger-full-access')
   .action(async (taskParts: string[], options) => {
     await runTask(taskParts.join(' '), options);
   });
@@ -119,6 +122,26 @@ skillsCmd
     for (const skill of skills) {
       const status = skill.enabled === false ? chalk.red('[disabled]') : chalk.green('[enabled]');
       console.log(`  ${status} ${chalk.bold(skill.name)} — ${skill.description ?? skill.path ?? 'no description'}`);
+    }
+  });
+
+program
+  .command('init')
+  .description('Scaffold .mimo-code.json, AGENTS.md, sample skill and sample subagent for this project')
+  .option('-C, --cwd <path>', 'workspace directory', process.cwd())
+  .action(async (options) => {
+    const { initProject } = await import('./config/init.js');
+    const cwd = options.cwd ?? process.cwd();
+    const result = await initProject(cwd);
+    if (result.created.length === 0) {
+      console.log(chalk.gray('Nothing to do — all scaffold files already exist.'));
+    } else {
+      console.log(chalk.green(`Initialized MiMo project at ${cwd}:`));
+      for (const file of result.created) console.log(chalk.green(`  + ${file}`));
+    }
+    if (result.alreadyExisted.length > 0) {
+      console.log(chalk.gray('Left untouched:'));
+      for (const file of result.alreadyExisted) console.log(chalk.gray(`  · ${file}`));
     }
   });
 
@@ -200,14 +223,18 @@ async function runTask(task: string, options: CliOptions): Promise<void> {
     const mcpTools = await createMcpTools(config.mcpServers, cwd);
     const allTools = [...defaultTools, ...mcpTools];
     const subAgentTool = createSubAgentTool(config, allTools);
-    const tools = [...allTools, subAgentTool];
+    const namedAgents = await discoverNamedSubagents(cwd).catch(() => []);
+    const dispatchTool = namedAgents.length > 0 ? [createNamedSubagentTool(config, allTools, namedAgents)] : [];
+    const tools = [...allTools, subAgentTool, ...dispatchTool];
     const mode = parseMode(options.mode);
+    const sandbox = parseSandbox(options.sandbox);
     await runConsoleAgent(task, config, tools, {
       cwd,
       dryRun: Boolean(options.dryRun),
       autoApprove: mode === 'yolo' || Boolean(options.yes),
       maxIterations: parsePositiveInteger(options.maxIterations ?? '12', '--max-iterations'),
       mode,
+      ...(sandbox ? { sandbox } : {}),
     });
   } catch (error) {
     console.error(chalk.red(errorMessage(error)));
@@ -223,14 +250,18 @@ async function runInteractive(options: CliOptions): Promise<void> {
     const mcpTools = await createMcpTools(config.mcpServers, cwd);
     const allTools = [...defaultTools, ...mcpTools];
     const subAgentTool = createSubAgentTool(config, allTools);
-    const tools = [...allTools, subAgentTool];
+    const namedAgents = await discoverNamedSubagents(cwd).catch(() => []);
+    const dispatchTool = namedAgents.length > 0 ? [createNamedSubagentTool(config, allTools, namedAgents)] : [];
+    const tools = [...allTools, subAgentTool, ...dispatchTool];
     const mode = parseMode(options.mode);
+    const sandbox = parseSandbox(options.sandbox);
     const agentOptions = {
       cwd,
       dryRun: Boolean(options.dryRun),
       autoApprove: mode === 'yolo' || Boolean(options.yes),
       maxIterations: parsePositiveInteger(options.maxIterations ?? '12', '--max-iterations'),
       mode,
+      ...(sandbox ? { sandbox } : {}),
     };
     if (options.tui === false) {
       const task = await input({ message: 'What should MiMo Code do?' });
@@ -259,6 +290,11 @@ function parseOverrides(options: CliOptions): PersistedConfig {
 function parseMode(value?: string): InteractionMode {
   if (value === 'plan' || value === 'agent' || value === 'yolo') return value;
   return 'agent';
+}
+
+function parseSandbox(value?: string): SandboxLevel | undefined {
+  if (value === 'read-only' || value === 'workspace-write' || value === 'danger-full-access') return value;
+  return undefined;
 }
 
 function parsePositiveInteger(value: string, name: string): number {
@@ -290,6 +326,7 @@ interface CliOptions {
   maxIterations?: string;
   tui?: boolean;
   mode?: string;
+  sandbox?: string;
 }
 
 await program.parseAsync();

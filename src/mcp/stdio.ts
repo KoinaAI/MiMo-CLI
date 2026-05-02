@@ -16,6 +16,27 @@ interface McpToolDescription {
   inputSchema?: Record<string, unknown>;
 }
 
+export type McpToolInvoker = (
+  mcpTool: McpToolDescription,
+  input: Record<string, unknown>,
+  context: ToolContext,
+) => Promise<string>;
+
+/**
+ * Stdio-based MCP client.
+ *
+ * Two usage patterns are supported:
+ *
+ *  1. Ephemeral (legacy `listTools` -> tool calls auto-restart and shut down
+ *     the child process around every invocation). Kept for backward
+ *     compatibility with code that wants a quick one-shot.
+ *
+ *  2. Persistent (`listToolsPersistent`) — the recommended path used by
+ *     {@link McpRegistry}. The child process is started once and kept alive
+ *     for the lifetime of the CLI process. Tool invocations reuse the same
+ *     stdio pipe, which is dramatically faster and matches what other MCP
+ *     hosts (Claude Desktop, Codex) do.
+ */
 export class McpStdioClient {
   private process: ChildProcessWithoutNullStreams | undefined;
   private nextId = 1;
@@ -26,6 +47,10 @@ export class McpStdioClient {
   private discoveredTools: McpToolDescription[] = [];
 
   constructor(private readonly config: McpServerConfig) {}
+
+  isRunning(): boolean {
+    return this.process !== undefined && !this.stopped;
+  }
 
   async start(cwd: string): Promise<void> {
     if (this.process) return;
@@ -38,6 +63,15 @@ export class McpStdioClient {
     });
     this.process.stdout.on('data', (chunk: Buffer) => this.readData(chunk));
     this.process.stderr.on('data', () => undefined);
+    this.process.on('error', (err) => {
+      // Surface spawn errors (ENOENT, EACCES) to any pending request and
+      // mark the client as stopped so future calls fail fast.
+      this.stopped = true;
+      for (const pending of this.pending.values()) {
+        pending.reject(err instanceof Error ? err : new MiMoCliError(String(err)));
+      }
+      this.pending.clear();
+    });
     this.process.on('close', () => {
       if (!this.stopping) {
         for (const pending of this.pending.values()) pending.reject(new MiMoCliError(`MCP server closed: ${this.config.name}`));
@@ -55,12 +89,34 @@ export class McpStdioClient {
     this.notify('notifications/initialized', {});
   }
 
+  /**
+   * Legacy: list tools and bind ephemeral invokers that restart the child
+   * process around every call. Kept for backward compatibility — new code
+   * should use {@link listToolsPersistent} via the {@link McpRegistry}.
+   */
   async listTools(cwd: string): Promise<ToolDefinition[]> {
     await this.start(cwd);
     const response = await this.request('tools/list', {});
     if (!isRecord(response) || !Array.isArray(response.tools)) return [];
     this.discoveredTools = response.tools.map((tool) => parseMcpTool(tool, this.config.name));
-    return this.discoveredTools.map((tool) => this.toToolDefinition(tool));
+    return this.discoveredTools.map((tool) => this.toEphemeralToolDefinition(tool));
+  }
+
+  /**
+   * Persistent variant. The supplied {@link invoker} is responsible for
+   * routing the call back through {@link requestPersistent}; the child
+   * process is left running between invocations.
+   */
+  async listToolsPersistent(cwd: string, invoker: McpToolInvoker): Promise<ToolDefinition[]> {
+    await this.start(cwd);
+    const response = await this.request('tools/list', {});
+    if (!isRecord(response) || !Array.isArray(response.tools)) return [];
+    this.discoveredTools = response.tools.map((tool) => parseMcpTool(tool, this.config.name));
+    return this.discoveredTools.map((tool) => this.toPersistentToolDefinition(tool, invoker));
+  }
+
+  requestPersistent(method: string, params: Record<string, unknown>): Promise<unknown> {
+    return this.request(method, params);
   }
 
   stop(): void {
@@ -70,7 +126,7 @@ export class McpStdioClient {
     this.process = undefined;
   }
 
-  private toToolDefinition(mcpTool: McpToolDescription): ToolDefinition {
+  private toEphemeralToolDefinition(mcpTool: McpToolDescription): ToolDefinition {
     const description = mcpTool.description ?? `MCP tool ${mcpTool.name} from ${this.config.name}`;
     const inputSchema = mcpTool.inputSchema ?? { type: 'object', additionalProperties: true };
     return {
@@ -86,6 +142,17 @@ export class McpStdioClient {
           this.stop();
         }
       },
+    };
+  }
+
+  private toPersistentToolDefinition(mcpTool: McpToolDescription, invoker: McpToolInvoker): ToolDefinition {
+    const description = mcpTool.description ?? `MCP tool ${mcpTool.name} from ${this.config.name}`;
+    const inputSchema = mcpTool.inputSchema ?? { type: 'object', additionalProperties: true };
+    return {
+      name: `mcp__${this.config.name}__${mcpTool.name}`,
+      description,
+      inputSchema,
+      run: async (input: Record<string, unknown>, context: ToolContext) => invoker(mcpTool, input, context),
     };
   }
 
@@ -147,14 +214,18 @@ function parseMcpTool(tool: unknown, serverName: string): McpToolDescription {
   };
 }
 
+/**
+ * Public entry point used by the CLI to spin up MCP-backed tools.
+ *
+ * Routes through {@link McpRegistry} so the underlying child processes are
+ * kept alive for the lifetime of the CLI process. Earlier versions of this
+ * function created an ephemeral client per server which restarted on every
+ * tool call — that behaviour is now opt-in via {@link McpStdioClient.listTools}.
+ */
 export async function createMcpTools(configs: McpServerConfig[] | undefined, cwd: string): Promise<ToolDefinition[]> {
-  const enabled = (configs ?? []).filter((config) => config.enabled !== false);
-  const tools: ToolDefinition[] = [];
-  for (const config of enabled) {
-    const client = new McpStdioClient(config);
-    tools.push(...(await client.listTools(cwd)));
-  }
-  return tools;
+  const { getMcpRegistry } = await import('./registry.js');
+  const registry = getMcpRegistry();
+  return registry.start(configs, cwd);
 }
 
 function formatMcpToolResult(response: unknown): string {
