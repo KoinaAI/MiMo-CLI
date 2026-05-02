@@ -10,8 +10,10 @@ import { compactMessages, formatContextStats } from '../context/compaction.js';
 import { runDiagnostics, formatDiagnostics } from '../doctor/checks.js';
 import { addMemoryNote, listMemoryNotes } from '../memory/store.js';
 import { createConfigWizardState, saveWizardConfig, updateWizard, wizardPrompt, wizardSummary } from '../config/tui-wizard.js';
-import { createSession, listSessions, readSession, saveSession } from '../session/store.js';
+import { createSession, listSessions, readSession, saveSession, exportSession } from '../session/store.js';
 import { getTodoStore } from '../tools/todo.js';
+import { formatNetworkPolicy, allowHost, denyHost, resetNetworkPolicy } from '../policy/network.js';
+import { renderMarkdown } from './markdown.js';
 import type {
   AgentEvent,
   AgentOptions,
@@ -27,7 +29,7 @@ import type {
 } from '../types.js';
 import { errorMessage } from '../utils/errors.js';
 import { completeSlashCommand, parseSlashCommand, slashCommandSuggestions, SLASH_COMMAND_HELP } from './commands.js';
-import { eventLabel, summarizeToolInput, summarizeToolOutput } from './format.js';
+import { eventLabel, summarizeToolInput, summarizeToolOutput, formatTimestamp, formatDuration } from './format.js';
 import { SPLASH, statusLine, modeIndicator, formatDiffOutput, formatThinkingBlock } from './theme.js';
 
 interface TuiMessage {
@@ -35,7 +37,9 @@ interface TuiMessage {
   kind: 'system' | 'user' | 'assistant' | 'tool' | 'error' | 'thinking' | 'diff';
   title: string;
   body: string;
-  collapsed?: boolean;
+  collapsed?: boolean | undefined;
+  timestamp?: string | undefined;
+  durationMs?: number | undefined;
 }
 
 interface PendingApproval {
@@ -64,7 +68,8 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
       id: 1,
       kind: 'system',
       title: 'Welcome',
-      body: `${SPLASH}\nType /help for commands · Tab completes slash commands · /mode to switch modes`,
+      body: `${SPLASH}\nType /help for commands · Tab completes · /mode to switch · Ctrl+C to interrupt`,
+      timestamp: formatTimestamp(),
     },
   ]);
   const [prompt, setPrompt] = useState('');
@@ -78,6 +83,10 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
   const [mode, setMode] = useState<InteractionMode>(options.mode ?? 'agent');
   const [streamingText, setStreamingText] = useState('');
   const alwaysApproveRef = useRef(options.autoApprove);
+  const abortRef = useRef<AbortController | null>(null);
+  const [inputHistory] = useState<string[]>(() => []);
+  const [historyIndex, setHistoryIndex] = useState(-1);
+  const toolStartTimes = useRef<Map<string, number>>(new Map());
 
   const currentOptions = useMemo<AgentOptions>(() => ({
     ...options,
@@ -88,7 +97,7 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
   const agent = useMemo(() => new CodingAgent(config, tools, currentOptions), [config, currentOptions, tools]);
 
   const append = useCallback((message: Omit<TuiMessage, 'id'>) => {
-    setMessages((current) => [...current.slice(-200), { ...message, id: Date.now() + Math.random() }]);
+    setMessages((current) => [...current.slice(-200), { ...message, id: Date.now() + Math.random(), timestamp: message.timestamp ?? formatTimestamp() }]);
   }, []);
 
   const addSessionMessages = useCallback((newMessages: ChatMessage[]) => {
@@ -105,12 +114,17 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
         setStreamingText((current) => current + event.content);
       } else if (event.type === 'assistant_message') {
         setStreamingText('');
-        append({ kind: 'assistant', title: 'MiMo', body: event.content });
+        append({ kind: 'assistant', title: 'MiMo', body: renderMarkdown(event.content) });
         addSessionMessages([{ role: 'assistant', content: event.content }]);
       } else if (event.type === 'tool_call') {
+        toolStartTimes.current.set(event.id, Date.now());
         append({ kind: 'tool', title: `⚡ ${event.name}`, body: summarizeToolInput(event.input), collapsed: false });
       } else if (event.type === 'tool_result') {
-        append({ kind: 'tool', title: `← ${event.name}`, body: summarizeToolOutput(event.content), collapsed: true });
+        const startTime = toolStartTimes.current.get(event.id);
+        const durationMs = startTime ? Date.now() - startTime : undefined;
+        toolStartTimes.current.delete(event.id);
+        const durationStr = durationMs ? ` (${formatDuration(durationMs)})` : '';
+        append({ kind: 'tool', title: `← ${event.name}${durationStr}`, body: summarizeToolOutput(event.content), collapsed: true, durationMs: durationMs ?? undefined });
       } else if (event.type === 'error') {
         append({ kind: 'error', title: 'Error', body: event.message });
       } else if (event.type === 'done') {
@@ -137,7 +151,9 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
 
       if (command.name === 'help') append({ kind: 'system', title: 'Slash commands', body: SLASH_COMMAND_HELP });
       if (command.name === 'exit') exit();
-      if (command.name === 'clear') setMessages([]);
+      if (command.name === 'clear') {
+        setMessages([{ id: Date.now(), kind: 'system', title: 'Cleared', body: 'Chat cleared. Type /help for commands.', timestamp: formatTimestamp() }]);
+      }
       if (command.name === 'config') {
         void createConfigWizardState().then(setWizard).catch((error: unknown) => append({ kind: 'error', title: 'Config', body: errorMessage(error) }));
       }
@@ -161,7 +177,13 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
       if (command.name === 'mcp') append({ kind: 'system', title: 'MCP servers', body: JSON.stringify(config.mcpServers ?? [], null, 2) });
       if (command.name === 'skill') append({ kind: 'system', title: 'Skills', body: JSON.stringify(config.skills ?? [], null, 2) });
       if (command.name === 'hooks') append({ kind: 'system', title: 'Hooks', body: JSON.stringify(config.hooks ?? [], null, 2) });
-      if (command.name === 'tools') append({ kind: 'system', title: 'Tools', body: tools.map((tool) => `${tool.name}${tool.readOnly ? ' (read-only)' : ''} — ${tool.description}`).join('\n') });
+      if (command.name === 'tools') {
+        const toolLines = tools.map((tool) => {
+          const readOnlyTag = tool.readOnly ? ' (read-only)' : '';
+          return `  ${tool.name}${readOnlyTag} — ${tool.description}`;
+        });
+        append({ kind: 'system', title: `Tools (${tools.length})`, body: toolLines.join('\n') });
+      }
       if (command.name === 'status') append({ kind: 'system', title: 'Status', body: statusLine(config, session, tools, usage, options.cwd, mode, sessionCost) });
 
       if (command.name === 'mode') {
@@ -247,6 +269,32 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
           append({ kind: 'system', title: 'Todo', body: todos.map((t) => `#${t.id} ${statusIcon(t.status)} ${t.text}`).join('\n') });
         }
       }
+      if (command.name === 'network') {
+        const subCmd = command.args[0];
+        const host = command.args[1];
+        if (subCmd === 'allow' && host) {
+          allowHost(host);
+          append({ kind: 'system', title: 'Network', body: `Allowed: ${host}` });
+        } else if (subCmd === 'deny' && host) {
+          denyHost(host);
+          append({ kind: 'system', title: 'Network', body: `Denied: ${host}` });
+        } else if (subCmd === 'reset') {
+          resetNetworkPolicy();
+          append({ kind: 'system', title: 'Network', body: 'Policy reset to default (allow all)' });
+        } else {
+          append({ kind: 'system', title: 'Network Policy', body: formatNetworkPolicy() });
+        }
+      }
+      if (command.name === 'export') {
+        const outputPath = command.args[0];
+        if (!outputPath) {
+          append({ kind: 'error', title: 'Export', body: 'Usage: /export <file-path>' });
+        } else {
+          void exportSession(session.id, outputPath)
+            .then((filePath) => append({ kind: 'system', title: 'Exported', body: `Session exported to ${filePath}` }))
+            .catch((error: unknown) => append({ kind: 'error', title: 'Export', body: errorMessage(error) }));
+        }
+      }
 
       return true;
     },
@@ -258,6 +306,11 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
       const task = value.trim();
       if (!task || running) return;
       setPrompt('');
+      // Add to input history
+      if (task && !task.startsWith('/')) {
+        inputHistory.push(task);
+        setHistoryIndex(-1);
+      }
       if (wizard) {
         void handleWizardInput(task, wizard, setWizard, append);
         return;
@@ -265,6 +318,8 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
       if (handleSlashCommand(task)) return;
       setRunning(true);
       setStreamingText('');
+      const controller = new AbortController();
+      abortRef.current = controller;
       append({ kind: 'user', title: 'You', body: task });
       const userMessage: ChatMessage = { role: 'user', content: task };
       const history = [...session.messages];
@@ -272,18 +327,45 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
       void agent
         .run(task, { onEvent: handleEvent, approveToolCall }, history)
         .catch((error: unknown) => append({ kind: 'error', title: 'Error', body: errorMessage(error) }))
-        .finally(() => { setRunning(false); setStreamingText(''); });
+        .finally(() => { setRunning(false); setStreamingText(''); abortRef.current = null; });
     },
-    [addSessionMessages, agent, append, approveToolCall, handleEvent, handleSlashCommand, running, session.messages, wizard],
+    [addSessionMessages, agent, append, approveToolCall, handleEvent, handleSlashCommand, inputHistory, running, session.messages, wizard],
   );
 
   useInput((input, key) => {
+    // Ctrl+C during run = interrupt, else exit
+    if (key.ctrl && input === 'c') {
+      if (running) {
+        // Cannot truly cancel a running promise, but we signal it
+        append({ kind: 'system', title: 'Interrupted', body: 'Attempting to stop current operation…' });
+        setRunning(false);
+        setStreamingText('');
+        return;
+      }
+      exit();
+      return;
+    }
+    if (key.escape && !running) exit();
     if (approval || running) return;
-    if (key.ctrl && input === 'c') exit();
-    if (key.escape) exit();
     if (key.tab) {
       const completed = completeSlashCommand(prompt);
       if (completed) setPrompt(completed);
+    }
+    // Input history: up/down arrows
+    if (key.upArrow && inputHistory.length > 0) {
+      const newIndex = historyIndex < 0 ? inputHistory.length - 1 : Math.max(0, historyIndex - 1);
+      setHistoryIndex(newIndex);
+      setPrompt(inputHistory[newIndex] ?? '');
+    }
+    if (key.downArrow && historyIndex >= 0) {
+      const newIndex = historyIndex + 1;
+      if (newIndex >= inputHistory.length) {
+        setHistoryIndex(-1);
+        setPrompt('');
+      } else {
+        setHistoryIndex(newIndex);
+        setPrompt(inputHistory[newIndex] ?? '');
+      }
     }
   });
 
@@ -296,6 +378,9 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
     : [];
   const suggestions = slashCommandSuggestions(prompt);
 
+  // Compact context bar for status line
+  const contextBar = formatContextStats(session.messages);
+
   return (
     <Box flexDirection="column" paddingX={1}>
       <Box flexDirection="column" minHeight={20}>
@@ -305,7 +390,7 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
         {streamingText ? (
           <Box flexDirection="column" marginBottom={1}>
             <Text color="cyan" bold>✻ MiMo</Text>
-            <Text>{streamingText}</Text>
+            <Text>{renderMarkdown(streamingText)}</Text>
           </Box>
         ) : null}
         {running && !approval && !streamingText ? (
@@ -336,7 +421,7 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
           {suggestions.length > 0 ? (
             <Box flexDirection="column" paddingX={1}>
               {suggestions.map((suggestion) => (
-                <Text key={suggestion.name} dimColor>{suggestion.usage.padEnd(28)} {suggestion.description}</Text>
+                <Text key={suggestion.name} dimColor>{suggestion.usage.padEnd(36)} {suggestion.description}</Text>
               ))}
             </Box>
           ) : null}
@@ -344,14 +429,14 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
             <Text color={wizard ? 'yellow' : modeColor(mode)}>╭─{wizard ? wizardPrompt(wizard) : `${modeIcon(mode)} mimo`} </Text>
             <TextInput value={prompt} onChange={setPrompt} onSubmit={submit} placeholder="message MiMo, /help, Tab complete" />
           </Box>
-          <Box paddingX={1}>
+          <Box paddingX={1} justifyContent="space-between">
             <Text color={wizard ? 'yellow' : modeColor(mode)}>╰─ </Text>
-            <Text dimColor>{statusLine(config, session, tools, usage, options.cwd, mode, sessionCost)}{alwaysApprove ? ' · auto-approve' : ''}{options.dryRun ? ' · dry-run' : ''}</Text>
+            <Text dimColor>{contextBar}{alwaysApprove ? ' · auto-approve' : ''}{options.dryRun ? ' · dry-run' : ''} · {config.model}</Text>
           </Box>
         </Box>
       )}
-      {wizard ? <Text color="yellow">{wizard.error ? `Error: ${wizard.error}` : wizard.step === 'review' ? wizardSummary(wizard) : 'back 返回 · cancel 取消 · save 保存'}</Text> : null}
-      <Text dimColor>Enter send · Tab complete · Esc/Ctrl+C quit · /help commands · /mode switch</Text>
+      {wizard ? <Text color="yellow">{wizard.error ? `Error: ${wizard.error}` : wizard.step === 'review' ? wizardSummary(wizard) : 'back / cancel / save'}</Text> : null}
+      <Text dimColor>Enter send · Tab complete · ↑↓ history · Esc quit · Ctrl+C {running ? 'interrupt' : 'quit'} · /help commands</Text>
     </Box>
   );
 }
@@ -401,9 +486,10 @@ function formatSessions(sessions: SessionRecord[]): string {
 function MessageView({ message }: { message: TuiMessage }): React.ReactElement {
   const color = colorForKind(message.kind);
   const prefix = prefixForKind(message.kind);
+  const ts = message.timestamp ? ` ${message.timestamp}` : '';
   return (
     <Box flexDirection="column" marginBottom={1}>
-      <Text color={color} bold>{prefix} {message.title}</Text>
+      <Text color={color} bold>{prefix} {message.title}<Text dimColor>{ts}</Text></Text>
       <Text>{message.body}<Newline /></Text>
     </Box>
   );
