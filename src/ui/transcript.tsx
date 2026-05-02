@@ -11,7 +11,8 @@ export type TranscriptKind =
   | 'tool_result'
   | 'thinking'
   | 'diff'
-  | 'error';
+  | 'error'
+  | 'splash';
 
 export interface TranscriptMessage {
   id: string | number;
@@ -37,6 +38,13 @@ interface MessageProps {
  * `<Newline />` blocks so messages don't double-space when stacked.
  */
 export function TranscriptEntry({ message }: MessageProps): React.ReactElement {
+  if (message.kind === 'splash') {
+    return (
+      <Box flexDirection="column" marginBottom={0}>
+        <Text>{message.body}</Text>
+      </Box>
+    );
+  }
   const { sigil, color } = decoration(message.kind);
   const ts = message.timestamp ? ` ${message.timestamp}` : '';
   const duration = message.durationMs !== undefined ? ` · ${formatDurationShort(message.durationMs)}` : '';
@@ -73,11 +81,11 @@ function MessageBody({ message }: { message: TranscriptMessage }): React.ReactEl
 export function decoration(kind: TranscriptKind): { sigil: string; color: 'gray' | 'green' | 'cyan' | 'yellow' | 'red' | 'magenta' } {
   switch (kind) {
     case 'user':
-      return { sigil: '▎ you', color: 'green' };
+      return { sigil: '▎', color: 'green' };
     case 'assistant':
-      return { sigil: '▎ mimo', color: 'cyan' };
+      return { sigil: '▎', color: 'cyan' };
     case 'thinking':
-      return { sigil: '▎ thinking', color: 'gray' };
+      return { sigil: '▎', color: 'gray' };
     case 'tool_call':
       return { sigil: '⏵', color: 'yellow' };
     case 'tool_result':

@@ -42,6 +42,7 @@
     "@types/node": "^24.10.1",
     "@types/react": "^19.2.14",
     "eslint": "^9.39.1",
+    "ink-testing-library": "^4.0.0",
     "tsx": "^4.20.6",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.46.4",
