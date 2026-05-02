@@ -4,7 +4,10 @@ import Spinner from 'ink-spinner';
 import SelectInput from 'ink-select-input';
 import { MimoTextInput } from './text-input.js';
 import { execSync } from 'node:child_process';
+import { readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { findMentionAt, applyMention, suggestMentions, expandMentions } from './mentions.js';
+import { composeInEditor } from './editor.js';
 import { CodingAgent } from '../agent/agent.js';
 import { discoverNamedSubagents } from '../agent/named-subagents.js';
 import { compactMessages, formatContextStats } from '../context/compaction.js';
@@ -116,6 +119,10 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
   const [inputKey, setInputKey] = useState(0);
   const [tabCycle, setTabCycle] = useState(0);
   const [branch, setBranch] = useState<string | undefined>(() => detectBranch(options.cwd));
+  const [cursor, setCursor] = useState(0);
+  const [cursorOverride, setCursorOverride] = useState<number | undefined>(undefined);
+  const [mentionResults, setMentionResults] = useState<string[]>([]);
+  const [mentionIndex, setMentionIndex] = useState(0);
   const alwaysApproveRef = useRef(options.autoApprove);
   const abortRef = useRef<AbortController | null>(null);
   const toolStartTimes = useRef<Map<string, number>>(new Map());
@@ -138,6 +145,28 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
     const id = setInterval(() => setNow(Date.now()), 500);
     return () => clearInterval(id);
   }, [activeTool, running]);
+
+  // Recompute @-mention completions whenever the prompt or caret moves.
+  useEffect(() => {
+    if (prompt.startsWith('/')) {
+      if (mentionResults.length > 0) setMentionResults([]);
+      return;
+    }
+    const ctx = findMentionAt(prompt, cursor);
+    if (!ctx) {
+      if (mentionResults.length > 0) setMentionResults([]);
+      return;
+    }
+    let cancelled = false;
+    void suggestMentions(options.cwd, ctx.query).then((results) => {
+      if (cancelled) return;
+      setMentionResults(results);
+      setMentionIndex(0);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [prompt, cursor, options.cwd, mentionResults.length]);
 
   const append = useCallback((message: Omit<TranscriptMessage, 'id'>) => {
     setMessages((prev) => {
@@ -435,6 +464,21 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
             .catch((error: unknown) => append({ kind: 'error', title: 'export', body: errorMessage(error) }));
         }
       }
+      if (command.name === 'edit') {
+        // Pause Ink's raw-mode stdin so the editor child can take over the
+        // terminal cleanly. We restore raw mode + a fresh input frame on
+        // return; if the editor crashes we still recover.
+        try { setRawMode(false); } catch { /* ignore */ }
+        void composeInEditor(prompt)
+          .then((next) => {
+            replacePrompt(next);
+            append({ kind: 'system', title: 'edit', body: next ? 'Loaded edited prompt — press Enter to send.' : 'Editor returned empty — prompt unchanged.', timestamp: formatTimestamp() });
+          })
+          .catch((error: unknown) => append({ kind: 'error', title: 'edit', body: errorMessage(error) }))
+          .finally(() => {
+            try { setRawMode(true); } catch { /* ignore */ }
+          });
+      }
 
       return true;
     },
@@ -473,20 +517,52 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
       setStreamingText('');
       const controller = new AbortController();
       abortRef.current = controller;
+      // Echo the user's literal prompt to the transcript before mention
+      // expansion so the visible history matches what they typed.
       append({ kind: 'user', title: 'you', body: task, timestamp: formatTimestamp() });
-      const userMessage: ChatMessage = { role: 'user', content: task };
-      const history = [...session.messages];
-      addSessionMessages([userMessage]);
-      void agent
-        .run(task, { onEvent: handleEvent, approveToolCall }, history)
-        .catch((error: unknown) => append({ kind: 'error', title: 'error', body: errorMessage(error), timestamp: formatTimestamp() }))
-        .finally(() => {
+      void (async () => {
+        let promptForModel = task;
+        const expansion = await expandMentions(task, async (rel) => {
+          const abs = path.resolve(options.cwd, rel);
+          if (!abs.startsWith(path.resolve(options.cwd))) {
+            throw new Error(`Refusing to read outside workspace: ${rel}`);
+          }
+          return readFile(abs, 'utf8');
+        }).catch(() => undefined);
+        if (expansion) {
+          promptForModel = expansion.prompt;
+          if (expansion.attached.length > 0) {
+            append({
+              kind: 'system',
+              title: 'attached',
+              body: expansion.attached.map((rel) => `  + ${rel}`).join('\n'),
+              timestamp: formatTimestamp(),
+            });
+          }
+          if (expansion.missing.length > 0) {
+            append({
+              kind: 'error',
+              title: 'attached (missing)',
+              body: expansion.missing.map((rel) => `  ! ${rel}`).join('\n'),
+              timestamp: formatTimestamp(),
+            });
+          }
+        }
+        const userMessage: ChatMessage = { role: 'user', content: promptForModel };
+        const history = [...session.messages];
+        addSessionMessages([userMessage]);
+        try {
+          await agent.run(promptForModel, { onEvent: handleEvent, approveToolCall }, history);
+        } catch (error) {
+          append({ kind: 'error', title: 'error', body: errorMessage(error), timestamp: formatTimestamp() });
+        } finally {
           setRunning(false);
           setStreamingText('');
           abortRef.current = null;
-        });
+        }
+      })();
     },
-    [addSessionMessages, agent, append, approveToolCall, handleEvent, handleSlashCommand, pendingLines, running, session.messages, wizard],
+    [addSessionMessages, agent, append, approveToolCall, handleEvent, handleSlashCommand, options.cwd, pendingLines, running, session.messages, wizard],
   );
 
   // Replace the prompt programmatically and remount the inner text input so
@@ -546,8 +622,21 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
       replacePrompt(deletePreviousWord(prompt));
       return;
     }
-    // Tab: cycle through completions when there are multiple.
+    // Tab: accept the highlighted @-mention if the popup is open, otherwise
+    // cycle through slash-command completions.
     if (key.tab) {
+      if (mentionResults.length > 0) {
+        const ctx = findMentionAt(prompt, cursor);
+        const pick = mentionResults[mentionIndex % mentionResults.length];
+        if (ctx && pick) {
+          const { value: nextValue, cursor: nextCursor } = applyMention(prompt, ctx, pick);
+          setPrompt(nextValue);
+          setCursorOverride(nextCursor);
+          setCursor(nextCursor);
+          setMentionResults([]);
+        }
+        return;
+      }
       const completed = completeSlashCommand(prompt, tabCycle);
       if (completed) {
         replacePrompt(completed);
@@ -556,6 +645,12 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
       return;
     }
     if (key.upArrow) {
+      // Up/Down navigates the mention popup when it's open; otherwise it
+      // walks the input history.
+      if (mentionResults.length > 0) {
+        setMentionIndex((idx) => (idx - 1 + mentionResults.length) % mentionResults.length);
+        return;
+      }
       if (inputHistory.length === 0) return;
       const newIndex = historyIndex < 0 ? inputHistory.length - 1 : Math.max(0, historyIndex - 1);
       setHistoryIndex(newIndex);
@@ -563,6 +658,10 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
       return;
     }
     if (key.downArrow) {
+      if (mentionResults.length > 0) {
+        setMentionIndex((idx) => (idx + 1) % mentionResults.length);
+        return;
+      }
       if (historyIndex < 0) return;
       const newIndex = historyIndex + 1;
       if (newIndex >= inputHistory.length) {
@@ -593,10 +692,11 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
   const handlePromptChange = useCallback(
     (value: string) => {
       setPrompt(value);
+      if (cursorOverride !== undefined) setCursorOverride(undefined);
       if (historyIndex !== -1) setHistoryIndex(-1);
       if (tabCycle !== 0) setTabCycle(0);
     },
-    [historyIndex, tabCycle],
+    [historyIndex, tabCycle, cursorOverride],
   );
 
   // Refresh branch indicator when something might have changed (lazy: every input cycle).
@@ -651,6 +751,19 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
               ))}
             </Box>
           ) : null}
+          {mentionResults.length > 0 ? (
+            <Box flexDirection="column" paddingX={1}>
+              <Text dimColor>files matching "{findMentionAt(prompt, cursor)?.query ?? ''}" — Tab to insert · ↑↓ to choose</Text>
+              {mentionResults.map((rel, idx) => {
+                const active = idx === mentionIndex;
+                return (
+                  <Text key={rel} {...(active ? { color: 'cyan' as const } : { dimColor: true })}>
+                    {active ? '› ' : '  '}{rel}
+                  </Text>
+                );
+              })}
+            </Box>
+          ) : null}
           {pendingLines.length > 0 ? (
             <Box flexDirection="column" paddingX={1}>
               {pendingLines.map((line, idx) => (
@@ -665,7 +778,9 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
               value={prompt}
               onChange={handlePromptChange}
               onSubmit={submit}
-              placeholder="message MiMo · / for commands · /keys for shortcuts · \\ for newline"
+              onCursorChange={setCursor}
+              cursorOverride={cursorOverride}
+              placeholder="message MiMo · / for commands · @ for files · /keys for shortcuts"
             />
           </Box>
           <BottomStatusBar
