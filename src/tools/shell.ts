@@ -1,12 +1,13 @@
 import { spawn } from 'node:child_process';
 import type { ToolDefinition } from '../types.js';
 import { asString, optionalNumber } from '../utils/json.js';
+import { analyzeCommand, formatSafetyResult } from './safety.js';
 
 const MAX_OUTPUT = 20_000;
 
 export const shellTool: ToolDefinition = {
   name: 'run_shell',
-  description: 'Run a shell command in the workspace. Use for tests, builds, and safe project commands.',
+  description: 'Run a shell command in the workspace. Use for tests, builds, and safe project commands. Dangerous commands are flagged for approval.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -22,7 +23,14 @@ export const shellTool: ToolDefinition = {
     if (context.dryRun) {
       return `[dry-run] Would run: ${command}`;
     }
-    return runCommand(command, context.cwd, timeoutMs);
+    const safety = analyzeCommand(command);
+    if (safety.level === 'dangerous') {
+      const warning = formatSafetyResult(safety);
+      return `${warning}\nCommand blocked. Use Agent or YOLO mode with explicit approval.`;
+    }
+    const safetyNote = safety.level === 'moderate' ? `${formatSafetyResult(safety)}\n` : '';
+    const result = await runCommand(command, context.cwd, timeoutMs);
+    return safetyNote ? `${safetyNote}${result}` : result;
   },
 };
 

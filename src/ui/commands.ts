@@ -22,7 +22,9 @@ export type SlashCommandName =
   | 'context'
   | 'mode'
   | 'cost'
-  | 'todo';
+  | 'todo'
+  | 'network'
+  | 'export';
 
 export interface SlashCommandSpec {
   name: SlashCommandName;
@@ -60,6 +62,8 @@ export const SLASH_COMMANDS: SlashCommandSpec[] = [
   { name: 'mode', usage: '/mode [plan|agent|yolo]', description: 'Switch interaction mode' },
   { name: 'cost', usage: '/cost', description: 'Show accumulated cost estimate for this session' },
   { name: 'todo', usage: '/todo', description: 'Show current task checklist' },
+  { name: 'network', usage: '/network [allow|deny <host>]', description: 'Show or configure network access policy' },
+  { name: 'export', usage: '/export <path>', description: 'Export current session to a JSON file' },
 ];
 
 export const SLASH_COMMAND_HELP = SLASH_COMMANDS.map((command) => `${command.usage.padEnd(32)} ${command.description}`).join('\n');

@@ -10,6 +10,7 @@ const DEFAULT_IGNORES = ['.git', 'node_modules', 'dist', 'coverage', '.mimo-code
 export const searchTool: ToolDefinition = {
   name: 'search_text',
   description: 'Search text files in the workspace using a JavaScript regular expression.',
+  readOnly: true,
   inputSchema: {
     type: 'object',
     properties: {

@@ -49,6 +49,22 @@ export function appendSessionMessages(session: SessionRecord, messages: ChatMess
   return { ...session, messages: [...session.messages, ...messages], updatedAt: new Date().toISOString() };
 }
 
+export async function exportSession(id: string, outputPath: string): Promise<string> {
+  const session = await readSession(id);
+  const data = JSON.stringify(session, null, 2);
+  await writeFile(outputPath, data, 'utf8');
+  return outputPath;
+}
+
+export async function importSession(filePath: string): Promise<SessionRecord> {
+  const content = await readFile(filePath, 'utf8');
+  const session = parseSession(JSON.parse(content) as unknown);
+  // Assign a new ID to avoid collisions
+  const imported = { ...session, id: crypto.randomUUID(), updatedAt: new Date().toISOString() };
+  await saveSession(imported);
+  return imported;
+}
+
 function parseSession(value: unknown): SessionRecord {
   if (!isRecord(value)) throw new MiMoCliError('Invalid session file');
   if (typeof value.id !== 'string' || typeof value.title !== 'string' || typeof value.cwd !== 'string') {

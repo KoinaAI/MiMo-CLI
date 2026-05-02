@@ -1,4 +1,5 @@
 import { MiMoClient } from '../api/client.js';
+import { discoverProjectContext, buildProjectContextPrompt } from '../context/project.js';
 import { runHooks } from '../hooks.js';
 import { buildSkillContext } from '../skills/loader.js';
 import type {
@@ -13,6 +14,7 @@ import type {
   TokenUsage,
 } from '../types.js';
 import { errorMessage } from '../utils/errors.js';
+import { logToolCall, logToolResult, logSessionEvent } from './audit.js';
 import { DEFAULT_SYSTEM_PROMPT, PLAN_MODE_SYSTEM_PROMPT, YOLO_MODE_SYSTEM_PROMPT } from './prompt.js';
 import { estimateCost, mergeUsage } from './usage.js';
 
@@ -46,13 +48,18 @@ export class CodingAgent {
   }
 
   async run(task: string, callbacks: AgentRunCallbacks = {}, history: ChatMessage[] = []): Promise<AgentResult> {
+    const sessionId = crypto.randomUUID().slice(0, 8);
+    void logSessionEvent(sessionId, 'session_start', `task: ${task.slice(0, 200)}`);
+
     const skillContext = await buildSkillContext(this.config.skills, this.options.cwd);
+    const projectContexts = await discoverProjectContext(this.options.cwd);
+    const projectContextPrompt = buildProjectContextPrompt(projectContexts);
     await runHooks(this.config.hooks, 'user_prompt', { cwd: this.options.cwd, prompt: task });
     const systemPrompt = this.systemPrompt;
     const activeTools = this.filterToolsForMode();
     const messages: ChatMessage[] = [
       { role: 'system', content: systemPrompt },
-      ...contextMessages(this.config, skillContext),
+      ...contextMessages(this.config, skillContext, projectContextPrompt),
       ...history,
       { role: 'user', content: task },
     ];
@@ -103,6 +110,7 @@ export class CodingAgent {
           continue;
         }
         emit(callbacks, { type: 'tool_call', id: toolCall.id, name: toolCall.name, input: toolCall.input });
+        void logToolCall(sessionId, toolCall.name, toolCall.input);
         const approval = await approveToolCall(toolCall, tool, callbacks, this.options);
         if (approval === 'deny') {
           const content = `Tool call denied by user: ${toolCall.name}`;
@@ -112,6 +120,7 @@ export class CodingAgent {
         }
         await runHooks(this.config.hooks, 'before_tool', { cwd: this.options.cwd, prompt: task, toolName: tool.name, toolInput: toolCall.input });
         const content = await tool.run(toolCall.input, this.options).catch((error: unknown) => `Tool error: ${errorMessage(error)}`);
+        void logToolResult(sessionId, tool.name, content);
         await runHooks(this.config.hooks, 'after_tool', {
           cwd: this.options.cwd,
           prompt: task,
@@ -134,8 +143,9 @@ export class CodingAgent {
 
 }
 
-function contextMessages(config: RuntimeConfig, skillContext: string): ChatMessage[] {
+function contextMessages(config: RuntimeConfig, skillContext: string, projectContext?: string): ChatMessage[] {
   const context: string[] = [];
+  if (projectContext) context.push(projectContext);
   if (config.mcpServers && config.mcpServers.length > 0) {
     context.push(`Configured MCP servers:\\n${JSON.stringify(config.mcpServers.filter((server) => server.enabled !== false), null, 2)}`);
   }

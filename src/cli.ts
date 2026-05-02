@@ -133,6 +133,65 @@ program
     console.log(formatDiagnostics(results));
   });
 
+const hooksCmd = program
+  .command('hooks')
+  .description('Manage hook configurations');
+
+hooksCmd
+  .command('list')
+  .description('List configured hooks')
+  .option('-C, --cwd <path>', 'workspace directory', process.cwd())
+  .action(async (options) => {
+    const config = await loadConfig(options.cwd ?? process.cwd());
+    const hooks = config.hooks ?? [];
+    if (hooks.length === 0) {
+      console.log('No hooks configured.');
+      return;
+    }
+    for (const hook of hooks) {
+      const status = hook.enabled === false ? chalk.red('[disabled]') : chalk.green('[enabled]');
+      console.log(`  ${status} ${chalk.bold(hook.name)} [${hook.event}] — ${hook.command} ${(hook.args ?? []).join(' ')}`);
+    }
+  });
+
+const sessionCmd = program
+  .command('session')
+  .description('Manage sessions');
+
+sessionCmd
+  .command('list')
+  .description('List saved sessions')
+  .action(async () => {
+    const { listSessions } = await import('./session/store.js');
+    const sessions = await listSessions();
+    if (sessions.length === 0) {
+      console.log('No saved sessions.');
+      return;
+    }
+    for (const session of sessions) {
+      const msgs = session.messages.length;
+      console.log(`  ${chalk.dim(session.id.slice(0, 8))} ${chalk.bold(session.title)} (${msgs} messages, ${session.updatedAt})`);
+    }
+  });
+
+sessionCmd
+  .command('export <id> <output>')
+  .description('Export a session to a JSON file')
+  .action(async (id: string, output: string) => {
+    const { exportSession } = await import('./session/store.js');
+    const filePath = await exportSession(id, output);
+    console.log(chalk.green(`Session exported to ${filePath}`));
+  });
+
+sessionCmd
+  .command('import <file>')
+  .description('Import a session from a JSON file')
+  .action(async (file: string) => {
+    const { importSession } = await import('./session/store.js');
+    const session = await importSession(file);
+    console.log(chalk.green(`Session imported as ${session.id}`));
+  });
+
 async function runTask(task: string, options: CliOptions): Promise<void> {
   try {
     const cwd = options.cwd ?? process.cwd();
