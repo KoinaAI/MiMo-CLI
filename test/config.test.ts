@@ -59,4 +59,34 @@ describe('parsePersistedConfig', () => {
   it('rejects invalid format', () => {
     expect(() => parsePersistedConfig({ format: 'bad' }, 'test')).toThrow(/Unsupported API format/);
   });
+
+  it('parses expanded hook workflow fields', () => {
+    const parsed = parsePersistedConfig(
+      {
+        hooks: [
+          {
+            name: 'guard',
+            event: 'pre_tool_use',
+            command: 'node',
+            args: ['guard.js'],
+            matcher: 'run_*',
+            allowTools: ['run_shell'],
+            blockTools: ['git_commit'],
+            timeoutMs: 1000,
+            continueOnCancel: true,
+          },
+        ],
+      },
+      'test',
+    );
+    expect(parsed.hooks?.[0]).toMatchObject({
+      name: 'guard',
+      event: 'pre_tool_use',
+      matcher: 'run_*',
+      allowTools: ['run_shell'],
+      blockTools: ['git_commit'],
+      timeoutMs: 1000,
+      continueOnCancel: true,
+    });
+  });
 });

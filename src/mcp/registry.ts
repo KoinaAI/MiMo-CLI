@@ -6,6 +6,14 @@ interface RegistryEntry {
   config: McpServerConfig;
   client: McpStdioClient;
   tools: ToolDefinition[];
+  error?: string | undefined;
+}
+
+export interface McpServerStatus {
+  name: string;
+  running: boolean;
+  toolCount: number;
+  error?: string | undefined;
 }
 
 /**
@@ -43,7 +51,9 @@ export class McpRegistry {
         this.entries.set(config.name, { config, client, tools: discovered });
         tools.push(...discovered);
       } catch (error) {
-        process.stderr.write(`MiMo: MCP server "${config.name}" failed to start: ${error instanceof Error ? error.message : String(error)}\n`);
+        const message = error instanceof Error ? error.message : String(error);
+        this.entries.set(config.name, { config, client: new McpStdioClient(config), tools: [], error: message });
+        process.stderr.write(`MiMo: MCP server "${config.name}" failed to start: ${message}\n`);
       }
     }
     return tools;
@@ -55,11 +65,12 @@ export class McpRegistry {
     return tools;
   }
 
-  status(): { name: string; running: boolean; toolCount: number }[] {
+  status(): McpServerStatus[] {
     return [...this.entries.values()].map((entry) => ({
       name: entry.config.name,
       running: entry.client.isRunning(),
       toolCount: entry.tools.length,
+      ...(entry.error ? { error: entry.error } : {}),
     }));
   }
 

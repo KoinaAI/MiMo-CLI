@@ -1,6 +1,6 @@
 import { MiMoClient } from '../api/client.js';
 import { discoverProjectContext, buildProjectContextPrompt } from '../context/project.js';
-import { runHooks, wasCancelled } from '../hooks.js';
+import { runHooks, wasCancelled, type HookRunResult } from '../hooks.js';
 import { defaultSandboxForMode, isToolAllowed } from '../policy/sandbox.js';
 import { buildSkillContext } from '../skills/loader.js';
 import type {
@@ -55,7 +55,7 @@ export class CodingAgent {
     const skillContext = await buildSkillContext(this.config.skills, this.options.cwd, task);
     const projectContexts = await discoverProjectContext(this.options.cwd);
     const projectContextPrompt = buildProjectContextPrompt(projectContexts);
-    await runHooks(this.config.hooks, 'user_prompt', { cwd: this.options.cwd, prompt: task });
+    emitHookResults(callbacks, await runHooks(this.config.hooks, 'user_prompt', { cwd: this.options.cwd, prompt: task }));
     const systemPrompt = this.systemPrompt;
     const activeTools = this.filterToolsForMode();
     const messages: ChatMessage[] = [
@@ -68,6 +68,12 @@ export class CodingAgent {
     let usage: TokenUsage = {};
 
     for (let iteration = 1; iteration <= this.options.maxIterations; iteration += 1) {
+      if (callbacks.signal?.aborted) {
+        const result = interruptedResult(this.config.model, usage, iteration);
+        emitHookResults(callbacks, await runHooks(this.config.hooks, 'stop', { cwd: this.options.cwd, prompt: task, reason: 'aborted' }));
+        emit(callbacks, { type: 'done', result });
+        return result;
+      }
       emit(callbacks, { type: 'thinking', iteration, maxIterations: this.options.maxIterations });
 
       const response = await this.client.completeStreaming(messages, activeTools, {
@@ -105,6 +111,12 @@ export class CodingAgent {
       });
 
       for (const toolCall of response.toolCalls) {
+        if (callbacks.signal?.aborted) {
+          const result = interruptedResult(this.config.model, usage, iteration);
+          emitHookResults(callbacks, await runHooks(this.config.hooks, 'stop', { cwd: this.options.cwd, prompt: task, reason: 'aborted' }));
+          emit(callbacks, { type: 'done', result });
+          return result;
+        }
         const tool = activeTools.find((candidate) => candidate.name === toolCall.name);
         if (!tool) {
           messages.push({ role: 'tool', toolCallId: toolCall.id, name: toolCall.name, content: `Unknown tool: ${toolCall.name}` });
@@ -128,7 +140,9 @@ export class CodingAgent {
           continue;
         }
         const beforeResults = await runHooks(this.config.hooks, 'before_tool', { cwd: this.options.cwd, prompt: task, toolName: tool.name, toolInput: toolCall.input });
+        emitHookResults(callbacks, beforeResults);
         const preResults = await runHooks(this.config.hooks, 'pre_tool_use', { cwd: this.options.cwd, prompt: task, toolName: tool.name, toolInput: toolCall.input });
+        emitHookResults(callbacks, preResults);
         if (wasCancelled(beforeResults) || wasCancelled(preResults)) {
           const blockedContent = `Tool call '${tool.name}' blocked by hook (exit code 2).`;
           emit(callbacks, { type: 'tool_result', id: toolCall.id, name: tool.name, content: blockedContent });
@@ -137,20 +151,22 @@ export class CodingAgent {
         }
         const content = await tool.run(toolCall.input, this.options).catch((error: unknown) => `Tool error: ${errorMessage(error)}`);
         void logToolResult(sessionId, tool.name, content);
-        await runHooks(this.config.hooks, 'after_tool', {
+        const afterResults = await runHooks(this.config.hooks, 'after_tool', {
           cwd: this.options.cwd,
           prompt: task,
           toolName: tool.name,
           toolInput: toolCall.input,
           toolOutput: content,
         });
-        await runHooks(this.config.hooks, 'post_tool_use', {
+        emitHookResults(callbacks, afterResults);
+        const postResults = await runHooks(this.config.hooks, 'post_tool_use', {
           cwd: this.options.cwd,
           prompt: task,
           toolName: tool.name,
           toolInput: toolCall.input,
           toolOutput: content,
         });
+        emitHookResults(callbacks, postResults);
         emit(callbacks, { type: 'tool_result', id: toolCall.id, name: tool.name, content });
         messages.push({ role: 'tool', toolCallId: toolCall.id, name: tool.name, content });
       }
@@ -188,4 +204,27 @@ async function approveToolCall(toolCall: ToolCall, tool: ToolDefinition, callbac
 
 function emit(callbacks: AgentRunCallbacks, event: AgentEvent): void {
   callbacks.onEvent?.(event);
+}
+
+function interruptedResult(model: string, usage: TokenUsage, iteration: number): AgentResult {
+  return {
+    finalMessage: 'Interrupted by user.',
+    iterations: iteration,
+    usage,
+    cost: estimateCost(model, usage),
+  };
+}
+
+function emitHookResults(callbacks: AgentRunCallbacks, results: HookRunResult[]): void {
+  for (const result of results) {
+    if (result.code === 0 && !result.output.trim()) continue;
+    emit(callbacks, {
+      type: 'hook_result',
+      event: result.event,
+      hook: result.hook,
+      code: result.code,
+      output: result.output.trim(),
+      cancelled: result.cancelled,
+    });
+  }
 }

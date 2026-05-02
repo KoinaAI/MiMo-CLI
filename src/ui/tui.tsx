@@ -12,12 +12,14 @@ import { CodingAgent } from '../agent/agent.js';
 import { discoverNamedSubagents } from '../agent/named-subagents.js';
 import { compactMessages, formatContextStats } from '../context/compaction.js';
 import { discoverSkills } from '../skills/discover.js';
+import { describeHookConfig } from '../hooks.js';
 import { initProject } from '../config/init.js';
 import { runDiagnostics, formatDiagnostics } from '../doctor/checks.js';
 import { addMemoryNote, listMemoryNotes } from '../memory/store.js';
 import { createConfigWizardState, saveWizardConfig, updateWizard, wizardPrompt, wizardSummary } from '../config/tui-wizard.js';
 import { createSession, listSessions, readSession, saveSession, exportSession } from '../session/store.js';
 import { getTodoStore } from '../tools/todo.js';
+import { getMcpRegistry } from '../mcp/registry.js';
 import { formatNetworkPolicy, allowHost, denyHost, resetNetworkPolicy } from '../policy/network.js';
 import { describeSandbox, defaultSandboxForMode } from '../policy/sandbox.js';
 import { renderMarkdown } from './markdown.js';
@@ -48,7 +50,7 @@ import {
   SLASH_COMMAND_HELP,
 } from './commands.js';
 import { summarizeToolInput, summarizeToolOutput, formatTimestamp, formatDuration } from './format.js';
-import { SPLASH, statusLine, modeIndicator, MODE_LABELS, shortenPath, verbForTool } from './theme.js';
+import { SPLASH, statusLine, modeIndicator, MODE_LABELS, shortenPath, verbForTool, formatWorkflowSummary } from './theme.js';
 // keep statusLine/modeIndicator imports — used by /status and /mode handlers below.
 
 interface PendingApproval {
@@ -123,13 +125,21 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
   const [cursorOverride, setCursorOverride] = useState<number | undefined>(undefined);
   const [mentionResults, setMentionResults] = useState<string[]>([]);
   const [mentionIndex, setMentionIndex] = useState(0);
+  const [discoveredSkillsCount, setDiscoveredSkillsCount] = useState(0);
+  const [namedSubagentsCount, setNamedSubagentsCount] = useState(0);
   const alwaysApproveRef = useRef(options.autoApprove);
   const abortRef = useRef<AbortController | null>(null);
   const toolStartTimes = useRef<Map<string, number>>(new Map());
   const indexCounter = useRef(0);
   const thinkingBufferRef = useRef(new ThinkingBuffer());
   const streamingBufferRef = useRef('');
-  const agent = new CodingAgent(config, tools, { ...options, sandbox });
+  const agent = new CodingAgent(config, tools, { ...options, mode, sandbox });
+
+  const mcpToolCount = tools.filter((tool) => tool.name.startsWith('mcp__')).length;
+  const builtinToolCount = tools.length - mcpToolCount;
+  const enabledMcpServers = config.mcpServers?.filter((server) => server.enabled !== false).length ?? 0;
+  const enabledHooks = config.hooks?.filter((hook) => hook.enabled !== false).length ?? 0;
+  const enabledConfigSkills = config.skills?.filter((skill) => skill.enabled !== false).length ?? 0;
 
   // Load persistent input history once.
   useEffect(() => {
@@ -137,6 +147,21 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
       setInputHistory(entries);
     });
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void Promise.all([
+      discoverSkills(options.cwd).catch(() => []),
+      discoverNamedSubagents(options.cwd).catch(() => []),
+    ]).then(([skills, agents]) => {
+      if (cancelled) return;
+      setDiscoveredSkillsCount(skills.length);
+      setNamedSubagentsCount(agents.length);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [options.cwd]);
 
   // Tick the wall clock every second so the verb-phase spinner ("Reading… 12s")
   // stays accurate while a tool is in flight.
@@ -251,6 +276,17 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
         });
         return;
       }
+      if (event.type === 'hook_result') {
+        const status = event.cancelled ? 'blocked' : event.code === 0 ? 'ok' : `exit ${event.code ?? 'unknown'}`;
+        append({
+          kind: event.cancelled ? 'error' : 'system',
+          title: `hook ${event.hook}`,
+          body: `[${event.event}] ${status}${event.output ? `\n${event.output}` : ''}`,
+          collapsed: !event.cancelled && !event.output,
+          timestamp: formatTimestamp(),
+        });
+        return;
+      }
       if (event.type === 'error') {
         flushThinking();
         flushStreaming();
@@ -324,8 +360,31 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
       }
       if (command.name === 'load') void doLoadSession(command.args[0], setSession, append);
       if (command.name === 'resume') void doResumeSession(setSession, append);
-      if (command.name === 'mcp') append({ kind: 'system', title: 'mcp servers', body: JSON.stringify(config.mcpServers ?? [], null, 2), timestamp: formatTimestamp() });
-      if (command.name === 'skill') append({ kind: 'system', title: 'skills (config)', body: JSON.stringify(config.skills ?? [], null, 2), timestamp: formatTimestamp() });
+      if (command.name === 'mcp') {
+        const statuses = new Map(getMcpRegistry().status().map((entry) => [entry.name, entry]));
+        append({
+          kind: 'system',
+          title: 'mcp servers',
+          body: formatList('Configured MCP servers', (config.mcpServers ?? []).map((server) => {
+            const status = statuses.get(server.name);
+            const lifecycle = server.enabled === false
+              ? 'disabled'
+              : status?.error
+                ? `error: ${status.error}`
+                : status?.running
+                  ? `running · ${status.toolCount} tools`
+                  : 'not started';
+            return `[${lifecycle}] ${server.name} — ${server.command} ${(server.args ?? []).join(' ')}`;
+          })),
+          timestamp: formatTimestamp(),
+        });
+      }
+      if (command.name === 'skill') append({
+        kind: 'system',
+        title: 'skills (config)',
+        body: formatList('Configured skills', (config.skills ?? []).map((skill) => `${skill.enabled === false ? '[disabled]' : '[enabled]'} ${skill.name}${skill.path ? ` — ${skill.path}` : ''}${skill.description ? ` — ${skill.description}` : ''}`)),
+        timestamp: formatTimestamp(),
+      });
       if (command.name === 'skills') {
         void discoverSkills(options.cwd)
           .then((skills) => {
@@ -363,7 +422,12 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
           append({ kind: 'system', title: 'sandbox', body: `Current: ${describeSandbox(sandbox)}\nUsage: /sandbox [read-only|workspace-write|danger-full-access]`, timestamp: formatTimestamp() });
         }
       }
-      if (command.name === 'hooks') append({ kind: 'system', title: 'hooks', body: JSON.stringify(config.hooks ?? [], null, 2), timestamp: formatTimestamp() });
+      if (command.name === 'hooks') append({
+        kind: 'system',
+        title: 'hooks',
+        body: formatList('Configured hooks', (config.hooks ?? []).map((hook) => `${hook.enabled === false ? '[disabled]' : '[enabled]'} ${describeHookConfig(hook)}`)),
+        timestamp: formatTimestamp(),
+      });
       if (command.name === 'tools') {
         const toolLines = tools.map((tool) => {
           const readOnlyTag = tool.readOnly ? ' (read-only)' : '';
@@ -372,6 +436,25 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
         append({ kind: 'system', title: `tools (${tools.length})`, body: toolLines.join('\n'), timestamp: formatTimestamp() });
       }
       if (command.name === 'status') append({ kind: 'system', title: 'status', body: statusLine(config, session, tools, usage, options.cwd, mode, sessionCost), timestamp: formatTimestamp() });
+      if (command.name === 'workflow') append({
+        kind: 'system',
+        title: 'workflow',
+        body: [
+          formatWorkflowSummary({
+            builtinTools: builtinToolCount,
+            mcpServers: enabledMcpServers,
+            mcpTools: mcpToolCount,
+            configuredSkills: enabledConfigSkills,
+            discoveredSkills: discoveredSkillsCount,
+            hooks: enabledHooks,
+            subagents: namedSubagentsCount,
+          }),
+          '',
+          'Commands: /mcp · /skills · /hooks · /agents · /tools · /doctor',
+        ].join('\n'),
+        timestamp: formatTimestamp(),
+      });
+      if (command.name === 'timeline') append({ kind: 'system', title: 'timeline', body: formatTimeline(messages), timestamp: formatTimestamp() });
 
       if (command.name === 'mode') {
         const target = command.args[0];
@@ -482,7 +565,7 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
 
       return true;
     },
-    [append, config, exit, mode, options.cwd, sandbox, session, sessionCost, tools, usage],
+    [append, builtinToolCount, config, discoveredSkillsCount, enabledConfigSkills, enabledHooks, enabledMcpServers, exit, mcpToolCount, messages, mode, namedSubagentsCount, options.cwd, sandbox, session, sessionCost, tools, usage],
   );
 
   const submit = useCallback(
@@ -552,7 +635,7 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
         const history = [...session.messages];
         addSessionMessages([userMessage]);
         try {
-          await agent.run(promptForModel, { onEvent: handleEvent, approveToolCall }, history);
+          await agent.run(promptForModel, { onEvent: handleEvent, approveToolCall, signal: controller.signal }, history);
         } catch (error) {
           append({ kind: 'error', title: 'error', body: errorMessage(error), timestamp: formatTimestamp() });
         } finally {
@@ -579,6 +662,7 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
     if (key.ctrl && input === 'c') {
       if (running) {
         append({ kind: 'system', title: 'interrupted', body: 'Stopping current run.', timestamp: formatTimestamp() });
+        abortRef.current?.abort();
         setRunning(false);
         flushStreaming();
         return;
@@ -729,6 +813,7 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
       {approval ? (
         <Box flexDirection="column" borderStyle="round" borderColor="yellow" paddingX={1}>
           <Text color="yellow" bold>Approve tool: {approval.tool.name}</Text>
+          <Text dimColor>{approval.tool.description}</Text>
           <Text color="yellow">{summarizeToolInput(approval.toolCall.input, 500)}</Text>
           <SelectInput
             items={approvalItems}
@@ -794,6 +879,10 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
             costSummary={costSummary}
             alwaysApprove={alwaysApprove}
             dryRun={options.dryRun}
+            mcpToolCount={mcpToolCount}
+            hookCount={enabledHooks}
+            skillCount={enabledConfigSkills + discoveredSkillsCount}
+            subagentCount={namedSubagentsCount}
           />
         </Box>
       )}
@@ -813,6 +902,10 @@ interface BottomStatusBarProps {
   costSummary: string;
   alwaysApprove: boolean;
   dryRun: boolean | undefined;
+  mcpToolCount: number;
+  hookCount: number;
+  skillCount: number;
+  subagentCount: number;
 }
 
 /**
@@ -822,18 +915,24 @@ interface BottomStatusBarProps {
  * dim line so the transcript above it stays the visual focus.
  */
 function BottomStatusBar(props: BottomStatusBarProps): React.ReactElement {
-  const { config, cwd, mode, branch, sandbox, contextBar, usageSummary, costSummary, alwaysApprove, dryRun } = props;
+  const { config, cwd, mode, branch, sandbox, contextBar, usageSummary, costSummary, alwaysApprove, dryRun, mcpToolCount, hookCount, skillCount, subagentCount } = props;
   const segments = [MODE_LABELS[mode], config.model, describeSandbox(sandbox)];
   if (alwaysApprove) segments.push('auto-approve');
   if (dryRun) segments.push('dry-run');
+  segments.push(`tools ${mcpToolCount > 0 ? `+${mcpToolCount} MCP` : 'local'}`);
+  if (skillCount > 0) segments.push(`skills ${skillCount}`);
+  if (hookCount > 0) segments.push(`hooks ${hookCount}`);
+  if (subagentCount > 0) segments.push(`agents ${subagentCount}`);
   segments.push(shortenPath(cwd));
   if (branch) segments.push(`⎇ ${branch}`);
   if (contextBar) segments.push(contextBar);
   if (usageSummary) segments.push(usageSummary);
   if (costSummary) segments.push(costSummary);
+  const quickActions = ' /workflow · /timeline · /diff · /doctor';
   return (
-    <Box paddingX={1}>
+    <Box flexDirection="column" paddingX={1}>
       <Text dimColor>{segments.join(' · ')}</Text>
+      <Text dimColor>{quickActions}</Text>
     </Box>
   );
 }
@@ -842,6 +941,25 @@ function modeBorderColor(mode: InteractionMode): 'cyan' | 'blue' | 'red' {
   if (mode === 'plan') return 'blue';
   if (mode === 'yolo') return 'red';
   return 'cyan';
+}
+
+function formatTimeline(messages: TranscriptMessage[]): string {
+  const events = messages
+    .filter((message) => message.kind !== 'splash')
+    .slice(-24)
+    .map((message) => {
+      const index = message.index !== undefined ? ` #${message.index}` : '';
+      const timestamp = message.timestamp ? `${message.timestamp} ` : '';
+      const title = `${message.kind}${index}: ${message.title}`.trim();
+      const suffix = message.durationMs !== undefined ? ` (${formatDuration(message.durationMs)})` : '';
+      return `${timestamp}${title}${suffix}`;
+    });
+  return events.length > 0 ? events.join('\n') : 'No activity yet.';
+}
+
+function formatList(label: string, lines: string[]): string {
+  if (lines.length === 0) return `${label}: none`;
+  return [`${label}:`, ...lines.map((line) => `  ${line}`)].join('\n');
 }
 
 function deletePreviousWord(input: string): string {

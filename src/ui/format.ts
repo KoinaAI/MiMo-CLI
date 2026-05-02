@@ -48,6 +48,8 @@ export function eventLabel(event: AgentEvent): string {
       return `Tool ${event.name}`;
     case 'tool_result':
       return `Result ${event.name}`;
+    case 'hook_result':
+      return `Hook ${event.hook}`;
     case 'error':
       return 'Error';
     case 'done':

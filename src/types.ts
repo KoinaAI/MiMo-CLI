@@ -104,6 +104,7 @@ export type AgentEvent =
   | { type: 'streaming_delta'; content: string }
   | { type: 'tool_call'; id: string; name: string; input: Record<string, unknown> }
   | { type: 'tool_result'; id: string; name: string; content: string }
+  | { type: 'hook_result'; event: HookEvent; hook: string; code: number | null; output: string; cancelled: boolean }
   | { type: 'error'; message: string }
   | { type: 'done'; result: AgentResult };
 
@@ -112,6 +113,7 @@ export type ToolApprovalDecision = 'approve' | 'deny' | 'always';
 export interface AgentRunCallbacks {
   onEvent?(event: AgentEvent): void;
   approveToolCall?(toolCall: ToolCall, tool: ToolDefinition): Promise<ToolApprovalDecision>;
+  signal?: AbortSignal | undefined;
 }
 
 export interface McpServerConfig {
@@ -164,6 +166,12 @@ export interface HookConfig {
   matcher?: string;
   /** Per-hook timeout in ms. Defaults to 30s. */
   timeoutMs?: number;
+  /** Optional comma-separated or array allow-list of tool names/globs. */
+  allowTools?: string[];
+  /** Optional comma-separated or array deny-list of tool names/globs. */
+  blockTools?: string[];
+  /** Continue running later hooks after a hook cancels. Defaults to false. */
+  continueOnCancel?: boolean;
 }
 
 export interface HookPayload {

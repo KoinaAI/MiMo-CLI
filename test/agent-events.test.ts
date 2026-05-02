@@ -68,4 +68,52 @@ describe('CodingAgent events', () => {
     expect(result.finalMessage).toBe('done');
     globalThis.fetch = originalFetch;
   });
+
+  it('emits hook results during tool workflow', async () => {
+    const originalFetch = globalThis.fetch;
+    let calls = 0;
+    globalThis.fetch = async () => {
+      calls += 1;
+      if (calls === 1) {
+        return new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  content: '',
+                  tool_calls: [
+                    {
+                      id: 'call-1',
+                      function: { name: 'read_file', arguments: '{"path":"README.md"}' },
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response(JSON.stringify({ choices: [{ message: { content: 'done' } }] }), { status: 200 });
+    };
+    const events: AgentEvent[] = [];
+    const tool: ToolDefinition = {
+      name: 'read_file',
+      description: 'read',
+      inputSchema: { type: 'object' },
+      readOnly: true,
+      run: async () => 'content',
+    };
+    const agent = new CodingAgent(
+      {
+        ...config,
+        hooks: [{ name: 'echo', event: 'before_tool', command: 'node', args: ['-e', 'process.stdout.write("hooked")'] }],
+      },
+      [tool],
+      { cwd: process.cwd(), dryRun: false, autoApprove: true, maxIterations: 2 },
+    );
+    await agent.run('read', { onEvent: (event) => events.push(event) });
+    expect(events.some((event) => event.type === 'hook_result' && event.hook === 'echo' && event.output === 'hooked')).toBe(true);
+    globalThis.fetch = originalFetch;
+  });
 });

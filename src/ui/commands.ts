@@ -32,7 +32,9 @@ export type SlashCommandName =
   | 'network'
   | 'export'
   | 'keys'
-  | 'edit';
+  | 'edit'
+  | 'workflow'
+  | 'timeline';
 
 export interface SlashCommandSpec {
   name: SlashCommandName;
@@ -80,6 +82,8 @@ export const SLASH_COMMANDS: SlashCommandSpec[] = [
   { name: 'export', usage: '/export <path>', description: 'Export current session to a JSON file' },
   { name: 'keys', usage: '/keys', description: 'Show keyboard shortcuts' },
   { name: 'edit', usage: '/edit', description: 'Compose the next prompt in $EDITOR' },
+  { name: 'workflow', usage: '/workflow', description: 'Show MCP, skills, hooks, subagents, and harness status' },
+  { name: 'timeline', usage: '/timeline', description: 'Show a compact session activity timeline' },
 ];
 
 export const SLASH_COMMAND_HELP = SLASH_COMMANDS.map((command) => `${command.usage.padEnd(40)} ${command.description}`).join('\n');

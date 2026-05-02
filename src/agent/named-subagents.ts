@@ -4,6 +4,7 @@ import path from 'node:path';
 import { USER_CONFIG_DIR } from '../constants.js';
 import { parseFrontMatter } from '../skills/discover.js';
 import { CodingAgent } from './agent.js';
+import { runHooks } from '../hooks.js';
 import type { AgentEvent, AgentResult, RuntimeConfig, ToolDefinition } from '../types.js';
 
 /**
@@ -92,7 +93,9 @@ export async function runNamedSubagent(agent: NamedSubagent, options: RunNamedSu
     maxIterations: agent.maxIterations,
     mode: 'agent',
   });
-  return subAgent.run(options.task, options.onEvent ? { onEvent: options.onEvent } : {});
+  const result = await subAgent.run(options.task, options.onEvent ? { onEvent: options.onEvent } : {});
+  await runHooks(options.parentConfig.hooks, 'subagent_done', { cwd: options.cwd, prompt: options.task, finalMessage: result.finalMessage });
+  return result;
 }
 
 /**

@@ -8,12 +8,12 @@ import type { CostEstimate, InteractionMode, RuntimeConfig, SessionRecord, ToolD
  * branding tagline `Intelligent Coding Agent` is asserted by tests.
  */
 export const SPLASH = [
-  chalk.cyan('  ╭──────────────────────────────╮'),
-  chalk.cyan('  │  ') + chalk.bold.white('M I M O') + chalk.cyan('   ') + chalk.gray('Code CLI') + chalk.cyan('       │'),
-  chalk.cyan('  │  ') + chalk.dim('Intelligent Coding Agent') + chalk.cyan('    │'),
-  chalk.cyan('  ╰──────────────────────────────╯'),
+  chalk.cyan('  ╭────────────────────────────────────────╮'),
+  chalk.cyan('  │  ') + chalk.bold.white('M I M O') + chalk.cyan('  ') + chalk.gray('Code · terminal coding agent') + chalk.cyan('  │'),
+  chalk.cyan('  │  ') + chalk.dim('Intelligent Coding Agent') + chalk.cyan('              │'),
+  chalk.cyan('  ╰────────────────────────────────────────╯'),
   '',
-  chalk.gray('  /help for commands · /keys for shortcuts · /mode to switch · Ctrl+C interrupts'),
+  chalk.gray('  /help commands · /keys shortcuts · /workflow overview · @file attach · Esc exit'),
   '',
 ].join('\n');
 
@@ -52,7 +52,7 @@ export function statusLine(
 
 export function formatThinkingBlock(text: string): string {
   const lines = text.split('\n');
-  return lines.map((line) => chalk.gray.italic(`  💭 ${line}`)).join('\n');
+  return lines.map((line) => chalk.gray.italic(`  · ${line}`)).join('\n');
 }
 
 export function formatToolCallHeader(name: string, input: Record<string, unknown>): string {
@@ -85,9 +85,9 @@ export function formatDiffOutput(diff: string): string {
 
 export function modeIndicator(mode: InteractionMode): string {
   const icons: Record<InteractionMode, string> = {
-    plan: '🔍',
-    agent: '🤖',
-    yolo: '⚡',
+    plan: '◇',
+    agent: '◆',
+    yolo: '▲',
   };
   return `${icons[mode]} ${MODE_LABELS[mode]}`;
 }
@@ -126,6 +126,29 @@ export function verbForTool(toolName: string): string {
   if (toolName.startsWith('mcp__')) return 'Calling';
   if (toolName.startsWith('agent_')) return 'Delegating';
   return 'Working';
+}
+
+export interface WorkflowSummary {
+  builtinTools: number;
+  mcpServers: number;
+  mcpTools: number;
+  configuredSkills: number;
+  discoveredSkills: number;
+  hooks: number;
+  subagents: number;
+}
+
+export function formatWorkflowSummary(summary: WorkflowSummary): string {
+  const rows = [
+    ['Built-in tools', summary.builtinTools],
+    ['MCP servers', summary.mcpServers],
+    ['MCP tools', summary.mcpTools],
+    ['Configured skills', summary.configuredSkills],
+    ['Discovered skills', summary.discoveredSkills],
+    ['Hooks', summary.hooks],
+    ['Named subagents', summary.subagents],
+  ];
+  return rows.map(([label, value]) => `${String(label).padEnd(20)} ${chalk.cyan(String(value))}`).join('\n');
 }
 
 /** Restrained sigils for transcript line prefixes. Avoids emoji clutter. */
