@@ -4,7 +4,6 @@ import TextInput from 'ink-text-input';
 import Spinner from 'ink-spinner';
 import SelectInput from 'ink-select-input';
 import { CodingAgent } from '../agent/agent.js';
-import { formatUsage } from '../agent/usage.js';
 import { createConfigWizardState, saveWizardConfig, updateWizard, wizardPrompt, wizardSummary } from '../config/tui-wizard.js';
 import { createSession, listSessions, readSession, saveSession } from '../session/store.js';
 import type {
@@ -19,8 +18,9 @@ import type {
   TokenUsage,
 } from '../types.js';
 import { errorMessage } from '../utils/errors.js';
-import { parseSlashCommand, SLASH_COMMAND_HELP } from './commands.js';
+import { completeSlashCommand, parseSlashCommand, slashCommandSuggestions, SLASH_COMMAND_HELP } from './commands.js';
 import { eventLabel, summarizeToolInput, summarizeToolOutput } from './format.js';
+import { SPLASH, statusLine } from './theme.js';
 
 interface TuiMessage {
   id: number;
@@ -54,8 +54,8 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
     {
       id: 1,
       kind: 'system',
-      title: 'MiMo Code CLI',
-      body: `Full TUI mode · model=${config.model} · format=${config.format}\nworkspace=${options.cwd}\nType /help for commands.`,
+      title: 'Welcome',
+      body: `${SPLASH}\nClaude-style TUI · Type /help for commands · Tab completes slash commands`,
     },
   ]);
   const [prompt, setPrompt] = useState('');
@@ -70,7 +70,7 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
   const agent = useMemo(() => new CodingAgent(config, tools, options), [config, options, tools]);
 
   const append = useCallback((message: Omit<TuiMessage, 'id'>) => {
-    setMessages((current) => [...current.slice(-120), { ...message, id: Date.now() + Math.random() }]);
+    setMessages((current) => [...current.slice(-160), { ...message, id: Date.now() + Math.random() }]);
   }, []);
 
   const addSessionMessages = useCallback((newMessages: ChatMessage[]) => {
@@ -85,14 +85,14 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
         append({ kind: 'assistant', title: 'MiMo', body: event.content });
         addSessionMessages([{ role: 'assistant', content: event.content }]);
       } else if (event.type === 'tool_call') {
-        append({ kind: 'tool', title: `Tool request: ${event.name}`, body: summarizeToolInput(event.input) });
+        append({ kind: 'tool', title: `⏺ ${event.name}`, body: summarizeToolInput(event.input) });
       } else if (event.type === 'tool_result') {
-        append({ kind: 'tool', title: `Tool result: ${event.name}`, body: summarizeToolOutput(event.content) });
+        append({ kind: 'tool', title: `⎿ ${event.name}`, body: summarizeToolOutput(event.content) });
       } else if (event.type === 'error') {
         append({ kind: 'error', title: 'Error', body: event.message });
       } else if (event.type === 'done') {
         setUsage(event.result.usage);
-        append({ kind: 'system', title: 'Done', body: `Iterations: ${event.result.iterations} · ${formatUsage(event.result.usage)}` });
+        append({ kind: 'system', title: 'Done', body: `Iterations: ${event.result.iterations}` });
       }
     },
     [addSessionMessages, append],
@@ -131,18 +131,15 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
           .then((sessions) => append({ kind: 'system', title: 'Sessions', body: formatSessions(sessions) }))
           .catch((error: unknown) => append({ kind: 'error', title: 'Sessions', body: errorMessage(error) }));
       }
-      if (command.name === 'load') {
-        void loadSession(command.args[0], setSession, append);
-      }
-      if (command.name === 'mcp') {
-        append({ kind: 'system', title: 'MCP servers', body: JSON.stringify(config.mcpServers ?? [], null, 2) });
-      }
-      if (command.name === 'skill') {
-        append({ kind: 'system', title: 'Skills', body: JSON.stringify(config.skills ?? [], null, 2) });
-      }
+      if (command.name === 'load') void loadSession(command.args[0], setSession, append);
+      if (command.name === 'mcp') append({ kind: 'system', title: 'MCP servers', body: JSON.stringify(config.mcpServers ?? [], null, 2) });
+      if (command.name === 'skill') append({ kind: 'system', title: 'Skills', body: JSON.stringify(config.skills ?? [], null, 2) });
+      if (command.name === 'hooks') append({ kind: 'system', title: 'Hooks', body: JSON.stringify(config.hooks ?? [], null, 2) });
+      if (command.name === 'tools') append({ kind: 'system', title: 'Tools', body: tools.map((tool) => `${tool.name} — ${tool.description}`).join('\n') });
+      if (command.name === 'status') append({ kind: 'system', title: 'Status', body: statusLine(config, session, tools, usage, options.cwd) });
       return true;
     },
-    [append, config.mcpServers, config.skills, exit, options.cwd, session],
+    [append, config, exit, options.cwd, session, tools, usage],
   );
 
   const submit = useCallback(
@@ -172,6 +169,10 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
     if (approval || running) return;
     if (key.ctrl && input === 'c') exit();
     if (key.escape) exit();
+    if (key.tab) {
+      const completed = completeSlashCommand(prompt);
+      if (completed) setPrompt(completed);
+    }
   });
 
   const approvalItems = approval
@@ -181,24 +182,25 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
         { label: 'Deny', value: 'deny' as const },
       ]
     : [];
+  const suggestions = slashCommandSuggestions(prompt);
 
   return (
     <Box flexDirection="column" paddingX={1}>
-      <Header config={config} options={options} usage={usage} alwaysApprove={alwaysApprove} session={session} />
-      <Box borderStyle="round" borderColor="gray" flexDirection="column" paddingX={1} minHeight={18}>
-        {messages.slice(-18).map((message) => (
+      <Box flexDirection="column" minHeight={20}>
+        {messages.slice(-20).map((message) => (
           <MessageView key={message.id} message={message} />
         ))}
         {running && !approval ? (
           <Text color="yellow">
-            <Spinner type="dots" /> Running agent…
+            <Spinner type="dots" /> Thinking…
           </Text>
         ) : null}
       </Box>
       {approval ? (
-        <Box borderStyle="round" borderColor="yellow" flexDirection="column" paddingX={1}>
-          <Text color="yellow">Approve tool call: {approval.tool.name}</Text>
-          <Text>{summarizeToolInput(approval.toolCall.input, 500)}</Text>
+        <Box flexDirection="column" paddingX={1}>
+          <Text color="yellow">╭─ Approve tool: {approval.tool.name}</Text>
+          <Text color="yellow">│ {summarizeToolInput(approval.toolCall.input, 500)}</Text>
+          <Text color="yellow">╰─</Text>
           <SelectInput
             items={approvalItems}
             onSelect={(item) => {
@@ -212,13 +214,26 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
           />
         </Box>
       ) : (
-        <Box borderStyle="single" borderColor={wizard ? 'yellow' : 'cyan'} paddingX={1}>
-          <Text color={wizard ? 'yellow' : 'cyan'}>{wizard ? `${wizardPrompt(wizard)}> ` : '任务> '}</Text>
-          <TextInput value={prompt} onChange={setPrompt} onSubmit={submit} placeholder="输入任务或 /help，Enter 发送，Esc/Ctrl+C 退出" />
+        <Box flexDirection="column">
+          {suggestions.length > 0 ? (
+            <Box flexDirection="column" paddingX={1}>
+              {suggestions.map((suggestion) => (
+                <Text key={suggestion.name} dimColor>{suggestion.usage.padEnd(24)} {suggestion.description}</Text>
+              ))}
+            </Box>
+          ) : null}
+          <Box paddingX={1}>
+            <Text color={wizard ? 'yellow' : 'cyan'}>╭─{wizard ? wizardPrompt(wizard) : 'mimo'} </Text>
+            <TextInput value={prompt} onChange={setPrompt} onSubmit={submit} placeholder="message MiMo, /help, Tab complete" />
+          </Box>
+          <Box paddingX={1}>
+            <Text color={wizard ? 'yellow' : 'cyan'}>╰─ </Text>
+            <Text dimColor>{statusLine(config, session, tools, usage, options.cwd)}{alwaysApprove ? ' · auto-approve' : ''}{options.dryRun ? ' · dry-run' : ''}</Text>
+          </Box>
         </Box>
       )}
-      {wizard ? <Text color="yellow">{wizard.error ? `Error: ${wizard.error}` : wizard.step === 'review' ? wizardSummary(wizard) : 'back 返回 · cancel 取消'}</Text> : null}
-      <Text dimColor>Shortcuts: Enter send · Esc/Ctrl+C quit · /help commands · mutating tools require approval unless -y/always approve</Text>
+      {wizard ? <Text color="yellow">{wizard.error ? `Error: ${wizard.error}` : wizard.step === 'review' ? wizardSummary(wizard) : 'back 返回 · cancel 取消 · save 保存'}</Text> : null}
+      <Text dimColor>Enter send · Tab complete · Esc/Ctrl+C quit · /help commands</Text>
     </Box>
   );
 }
@@ -265,37 +280,12 @@ function formatSessions(sessions: SessionRecord[]): string {
   return sessions.map((session) => `${session.id.slice(0, 8)}  ${session.updatedAt}  ${session.title}  (${session.messages.length} messages)`).join('\n');
 }
 
-function Header({
-  config,
-  options,
-  usage,
-  alwaysApprove,
-  session,
-}: {
-  config: RuntimeConfig;
-  options: AgentOptions;
-  usage: TokenUsage;
-  alwaysApprove: boolean;
-  session: SessionRecord;
-}): React.ReactElement {
-  return (
-    <Box flexDirection="column">
-      <Text bold color="cyan">MiMo Code CLI</Text>
-      <Text dimColor>
-        {config.model} · max {config.maxTokens} · {config.format} · {config.baseUrl} · {options.cwd}
-      </Text>
-      <Text dimColor>
-        session={session.title} {session.id.slice(0, 8)} · MCP {config.mcpServers?.length ?? 0} · Skills {config.skills?.length ?? 0} · {options.dryRun ? 'dry-run · ' : ''}{alwaysApprove ? 'auto-approve · ' : ''}{formatUsage(usage)}
-      </Text>
-    </Box>
-  );
-}
-
 function MessageView({ message }: { message: TuiMessage }): React.ReactElement {
   const color = colorForKind(message.kind);
+  const prefix = prefixForKind(message.kind);
   return (
     <Box flexDirection="column" marginBottom={1}>
-      <Text color={color} bold>{message.title}</Text>
+      <Text color={color} bold>{prefix} {message.title}</Text>
       <Text>{message.body}<Newline /></Text>
     </Box>
   );
@@ -307,4 +297,12 @@ function colorForKind(kind: TuiMessage['kind']): 'gray' | 'green' | 'cyan' | 'ye
   if (kind === 'assistant') return 'cyan';
   if (kind === 'tool') return 'yellow';
   return 'red';
+}
+
+function prefixForKind(kind: TuiMessage['kind']): string {
+  if (kind === 'user') return '>';
+  if (kind === 'assistant') return '✻';
+  if (kind === 'tool') return '⏺';
+  if (kind === 'error') return '✖';
+  return '•';
 }

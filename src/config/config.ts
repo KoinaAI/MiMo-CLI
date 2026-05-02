@@ -13,7 +13,7 @@ import {
   USER_CONFIG_DIR,
   USER_CONFIG_FILE,
 } from '../constants.js';
-import type { ApiFormat, PersistedConfig, RuntimeConfig } from '../types.js';
+import type { ApiFormat, HookEvent, PersistedConfig, RuntimeConfig } from '../types.js';
 import { MiMoCliError } from '../utils/errors.js';
 import { isRecord, optionalNumber, optionalString } from '../utils/json.js';
 
@@ -82,6 +82,7 @@ export async function loadConfig(cwd: string, overrides: PersistedConfig = {}): 
     ...(merged.systemPrompt ? { systemPrompt: merged.systemPrompt } : {}),
     ...(merged.mcpServers ? { mcpServers: merged.mcpServers } : {}),
     ...(merged.skills ? { skills: merged.skills } : {}),
+    ...(merged.hooks ? { hooks: merged.hooks } : {}),
   };
 }
 
@@ -125,6 +126,8 @@ export function parsePersistedConfig(value: unknown, source: string): PersistedC
   if (mcpServers) config.mcpServers = mcpServers;
   const skills = parseSkills(value.skills);
   if (skills) config.skills = skills;
+  const hooks = parseHooks(value.hooks);
+  if (hooks) config.hooks = hooks;
   return config;
 }
 
@@ -186,6 +189,35 @@ function parseSkills(value: unknown): PersistedConfig['skills'] {
       ...(typeof entry.enabled === 'boolean' ? { enabled: entry.enabled } : {}),
     };
   });
+}
+
+function parseHooks(value: unknown): PersistedConfig['hooks'] {
+  if (value === undefined || value === null) return undefined;
+  if (!Array.isArray(value)) throw new MiMoCliError('Field "hooks" must be an array');
+  return value.map((entry, index) => {
+    if (!isRecord(entry)) throw new MiMoCliError(`hooks[${index}] must be an object`);
+    const name = optionalString(entry.name, 'name');
+    const event = optionalString(entry.event, 'event');
+    const command = optionalString(entry.command, 'command');
+    if (!name || !event || !command) throw new MiMoCliError(`hooks[${index}] requires name, event, and command`);
+    if (!isHookEvent(event)) {
+      throw new MiMoCliError(`hooks[${index}] has unsupported event: ${event}`);
+    }
+    const args = parseStringArray(entry.args, `hooks[${index}].args`);
+    const env = parseStringRecord(entry.env, `hooks[${index}].env`);
+    return {
+      name,
+      event,
+      command,
+      ...(args ? { args } : {}),
+      ...(env ? { env } : {}),
+      ...(typeof entry.enabled === 'boolean' ? { enabled: entry.enabled } : {}),
+    };
+  });
+}
+
+function isHookEvent(value: string): value is HookEvent {
+  return ['session_start', 'user_prompt', 'before_tool', 'after_tool', 'agent_done'].includes(value);
 }
 
 function parseStringArray(value: unknown, key: string): string[] | undefined {

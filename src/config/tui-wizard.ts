@@ -14,6 +14,7 @@ export type ConfigWizardStep =
   | 'systemPrompt'
   | 'mcpServers'
   | 'skills'
+  | 'hooks'
   | 'review';
 
 export interface ConfigWizardState {
@@ -35,6 +36,7 @@ export async function createConfigWizardState(): Promise<ConfigWizardState> {
   if (existing.systemPrompt) draft.systemPrompt = existing.systemPrompt;
   if (existing.mcpServers) draft.mcpServers = existing.mcpServers;
   if (existing.skills) draft.skills = existing.skills;
+  if (existing.hooks) draft.hooks = existing.hooks;
   return {
     step: 'apiKey',
     existing,
@@ -66,6 +68,8 @@ export function wizardPrompt(state: ConfigWizardState): string {
       return 'MCP servers JSON array（留空跳过）';
     case 'skills':
       return 'Skills JSON array（留空跳过）';
+    case 'hooks':
+      return 'Hooks JSON array（留空跳过）';
     case 'review':
       return '输入 save 保存，back 返回，cancel 取消';
   }
@@ -123,7 +127,12 @@ export function updateWizard(state: ConfigWizardState, rawInput: string): Config
       return next(state, 'skills', input ? { mcpServers: parseMcpServersInput(input) } : {});
     }
     if (state.step === 'skills') {
-      return next(state, 'review', input ? { skills: parseSkillsInput(input) } : {});
+      return next(state, 'hooks', input ? { skills: parseSkillsInput(input) } : {});
+    }
+    if (state.step === 'hooks') {
+      if (!input) return next(state, 'review', {});
+      const hooks = parseHooksInput(input);
+      return next(state, 'review', hooks ? { hooks } : {});
     }
     return state;
   } catch (error) {
@@ -157,6 +166,7 @@ function previousStep(step: ConfigWizardStep): ConfigWizardStep {
     'systemPrompt',
     'mcpServers',
     'skills',
+    'hooks',
     'review',
   ];
   const index = steps.indexOf(step);
@@ -173,4 +183,10 @@ function parseSkillsInput(input: string): SkillConfig[] {
   const value = JSON.parse(input) as unknown;
   if (!Array.isArray(value)) throw new Error('Skill 配置必须是数组');
   return value as SkillConfig[];
+}
+
+function parseHooksInput(input: string): PersistedConfig['hooks'] {
+  const value = JSON.parse(input) as unknown;
+  if (!Array.isArray(value)) throw new Error('Hook 配置必须是数组');
+  return value as PersistedConfig['hooks'];
 }

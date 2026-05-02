@@ -39,6 +39,7 @@ export interface RuntimeConfig {
   systemPrompt?: string;
   mcpServers?: McpServerConfig[];
   skills?: SkillConfig[];
+  hooks?: HookConfig[];
 }
 
 export interface PersistedConfig {
@@ -51,6 +52,7 @@ export interface PersistedConfig {
   systemPrompt?: string;
   mcpServers?: McpServerConfig[];
   skills?: SkillConfig[];
+  hooks?: HookConfig[];
 }
 
 export interface AgentOptions {
@@ -116,4 +118,24 @@ export interface SessionRecord {
   createdAt: string;
   updatedAt: string;
   messages: ChatMessage[];
+}
+
+export type HookEvent = 'session_start' | 'user_prompt' | 'before_tool' | 'after_tool' | 'agent_done';
+
+export interface HookConfig {
+  name: string;
+  event: HookEvent;
+  command: string;
+  args?: string[];
+  env?: Record<string, string>;
+  enabled?: boolean;
+}
+
+export interface HookPayload {
+  cwd: string;
+  prompt?: string;
+  toolName?: string;
+  toolInput?: Record<string, unknown>;
+  toolOutput?: string;
+  finalMessage?: string;
 }

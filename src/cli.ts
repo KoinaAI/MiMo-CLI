@@ -6,6 +6,8 @@ import { runConsoleAgent } from './agent/console-runner.js';
 import { configureInteractively } from './config/interactive.js';
 import { DEFAULT_MAX_TOKENS, DEFAULT_TEMPERATURE, SUPPORTED_MODELS } from './constants.js';
 import { loadConfig, tokenPlanBaseUrl } from './config/config.js';
+import { runHooks } from './hooks.js';
+import { createMcpTools } from './mcp/stdio.js';
 import { defaultTools } from './tools/index.js';
 import type { ApiFormat, PersistedConfig } from './types.js';
 import { errorMessage } from './utils/errors.js';
@@ -80,7 +82,8 @@ async function runTask(task: string, options: CliOptions): Promise<void> {
     const cwd = options.cwd ?? process.cwd();
     const overrides = parseOverrides(options);
     const config = await loadConfig(cwd, overrides);
-    await runConsoleAgent(task, config, defaultTools, {
+    const tools = [...defaultTools, ...(await createMcpTools(config.mcpServers, cwd))];
+    await runConsoleAgent(task, config, tools, {
       cwd,
       dryRun: Boolean(options.dryRun),
       autoApprove: Boolean(options.yes),
@@ -97,6 +100,7 @@ async function runInteractive(options: CliOptions): Promise<void> {
     const cwd = options.cwd ?? process.cwd();
     const overrides = parseOverrides(options);
     const config = await loadConfig(cwd, overrides);
+    const tools = [...defaultTools, ...(await createMcpTools(config.mcpServers, cwd))];
     const agentOptions = {
       cwd,
       dryRun: Boolean(options.dryRun),
@@ -105,10 +109,11 @@ async function runInteractive(options: CliOptions): Promise<void> {
     };
     if (options.tui === false) {
       const task = await input({ message: 'What should MiMo Code do?' });
-      await runConsoleAgent(task, config, defaultTools, agentOptions);
+      await runConsoleAgent(task, config, tools, agentOptions);
       return;
     }
-    await runTui(config, defaultTools, agentOptions);
+    await runHooks(config.hooks, 'session_start', { cwd });
+    await runTui(config, tools, agentOptions);
   } catch (error) {
     console.error(chalk.red(errorMessage(error)));
     process.exitCode = 1;
