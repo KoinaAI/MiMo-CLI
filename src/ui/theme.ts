@@ -13,7 +13,7 @@ export const SPLASH = [
   chalk.cyan('  │  ') + chalk.dim('Intelligent Coding Agent') + chalk.cyan('    │'),
   chalk.cyan('  ╰──────────────────────────────╯'),
   '',
-  chalk.gray('  /help · /mode · /init · /resume · Tab completes · Ctrl+C interrupts'),
+  chalk.gray('  /help for commands · /keys for shortcuts · /mode to switch · Ctrl+C interrupts'),
   '',
 ].join('\n');
 

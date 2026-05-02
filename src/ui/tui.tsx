@@ -1,13 +1,12 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Box, render, Text, useApp, useInput, useStdin } from 'ink';
-import TextInput from 'ink-text-input';
 import Spinner from 'ink-spinner';
 import SelectInput from 'ink-select-input';
+import { MimoTextInput } from './text-input.js';
 import { execSync } from 'node:child_process';
 import path from 'node:path';
 import { CodingAgent } from '../agent/agent.js';
 import { discoverNamedSubagents } from '../agent/named-subagents.js';
-import { formatCost } from '../agent/usage.js';
 import { compactMessages, formatContextStats } from '../context/compaction.js';
 import { discoverSkills } from '../skills/discover.js';
 import { initProject } from '../config/init.js';
@@ -22,6 +21,8 @@ import { renderMarkdown } from './markdown.js';
 import { appendInputHistory, loadInputHistory } from './history.js';
 import { TranscriptEntry, type TranscriptKind, type TranscriptMessage } from './transcript.js';
 import { isLikelyDiff } from './diff.js';
+import { ThinkingBuffer } from './thinking-buffer.js';
+import { formatUsage, formatCost } from '../agent/usage.js';
 import type {
   AgentEvent,
   AgentOptions,
@@ -44,13 +45,31 @@ import {
   SLASH_COMMAND_HELP,
 } from './commands.js';
 import { summarizeToolInput, summarizeToolOutput, formatTimestamp, formatDuration } from './format.js';
-import { SPLASH, statusLine, modeIndicator, topStatusLine, verbForTool } from './theme.js';
+import { SPLASH, statusLine, modeIndicator, MODE_LABELS, shortenPath, verbForTool } from './theme.js';
+// keep statusLine/modeIndicator imports — used by /status and /mode handlers below.
 
 interface PendingApproval {
   toolCall: ToolCall;
   tool: ToolDefinition;
   resolve(decision: ToolApprovalDecision): void;
 }
+
+const KEYBOARD_SHORTCUTS = [
+  'Enter            Send the current message',
+  '\\ then Enter     Continue the message on a new line',
+  '↑ / ↓            Navigate input history',
+  '← / →            Move cursor within the input',
+  '⌫ / DEL          Delete left of / right of cursor',
+  'Home / Ctrl+A    Jump to start of line',
+  'End  / Ctrl+E    Jump to end of line',
+  'Tab              Cycle slash-command completions',
+  'Ctrl+L           Clear the transcript',
+  'Ctrl+U           Reset the current input',
+  'Ctrl+W           Delete the previous word',
+  'Ctrl+K           Kill to end of line',
+  'Ctrl+C           Interrupt run · press again to quit',
+  'Esc              Deny pending approval / clear pending lines / quit when idle',
+].join('\n');
 
 interface TuiAppProps {
   config: RuntimeConfig;
@@ -71,10 +90,10 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
   const [messages, setMessages] = useState<TranscriptMessage[]>(() => [
     {
       id: 1,
-      kind: 'system',
-      title: 'welcome',
-      body: `${SPLASH}\nType /help for commands · Tab completes · /mode to switch · Ctrl+C to interrupt`,
-      timestamp: formatTimestamp(),
+      kind: 'splash',
+      title: '',
+      body: SPLASH,
+      timestamp: undefined,
     },
   ]);
   const [prompt, setPrompt] = useState('');
@@ -89,16 +108,20 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
   const [mode, setMode] = useState<InteractionMode>(options.mode ?? 'agent');
   const [sandbox, setSandbox] = useState<SandboxLevel>(options.sandbox ?? defaultSandboxForMode(options.mode ?? 'agent'));
   const [streamingText, setStreamingText] = useState('');
+  const [streamingThinking, setStreamingThinking] = useState('');
   const [activeTool, setActiveTool] = useState<{ name: string; startedAt: number } | undefined>();
   const [now, setNow] = useState<number>(() => Date.now());
   const [inputHistory, setInputHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
+  const [inputKey, setInputKey] = useState(0);
   const [tabCycle, setTabCycle] = useState(0);
   const [branch, setBranch] = useState<string | undefined>(() => detectBranch(options.cwd));
   const alwaysApproveRef = useRef(options.autoApprove);
   const abortRef = useRef<AbortController | null>(null);
   const toolStartTimes = useRef<Map<string, number>>(new Map());
   const indexCounter = useRef(0);
+  const thinkingBufferRef = useRef(new ThinkingBuffer());
+  const streamingBufferRef = useRef('');
   const agent = new CodingAgent(config, tools, { ...options, sandbox });
 
   // Load persistent input history once.
@@ -132,22 +155,58 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
     }));
   }, []);
 
+  // Commit any buffered reasoning content as a single transcript entry. Called
+  // before any non-thinking event lands (assistant message, tool call, error,
+  // done, etc.) so that consecutive `assistant_thinking` deltas always render
+  // as one block instead of fragmented panels.
+  const flushThinking = useCallback(() => {
+    const text = thinkingBufferRef.current.flush();
+    setStreamingThinking('');
+    if (text) {
+      append({ kind: 'thinking', title: 'thinking', body: text, collapsed: true });
+    }
+  }, [append]);
+
+  const flushStreaming = useCallback(() => {
+    streamingBufferRef.current = '';
+    setStreamingText('');
+  }, []);
+
   const handleEvent = useCallback(
     (event: AgentEvent) => {
       if (event.type === 'thinking') return;
       if (event.type === 'assistant_thinking') {
-        append({ kind: 'thinking', title: 'thinking', body: event.content, timestamp: formatTimestamp(), collapsed: true });
-      } else if (event.type === 'streaming_delta') {
-        setStreamingText((current) => current + event.content);
-      } else if (event.type === 'assistant_message') {
-        setStreamingText('');
+        thinkingBufferRef.current.append(event.content);
+        setStreamingThinking(thinkingBufferRef.current.peek());
+        return;
+      }
+      if (event.type === 'streaming_delta') {
+        // First content delta after a thinking burst commits the thinking
+        // block to the transcript so the live "thinking… streaming" panel
+        // doesn't sit alongside the live "mimo… streaming" panel.
+        if (streamingBufferRef.current === '' && !thinkingBufferRef.current.isEmpty()) {
+          flushThinking();
+        }
+        streamingBufferRef.current += event.content;
+        setStreamingText(streamingBufferRef.current);
+        return;
+      }
+      if (event.type === 'assistant_message') {
+        flushThinking();
+        flushStreaming();
         append({ kind: 'assistant', title: 'mimo', body: renderMarkdown(event.content), timestamp: formatTimestamp() });
         addSessionMessages([{ role: 'assistant', content: event.content }]);
-      } else if (event.type === 'tool_call') {
+        return;
+      }
+      if (event.type === 'tool_call') {
+        flushThinking();
+        flushStreaming();
         toolStartTimes.current.set(event.id, Date.now());
         setActiveTool({ name: event.name, startedAt: Date.now() });
         append({ kind: 'tool_call', title: `${event.name}`, body: summarizeToolInput(event.input), timestamp: formatTimestamp() });
-      } else if (event.type === 'tool_result') {
+        return;
+      }
+      if (event.type === 'tool_result') {
         const startTime = toolStartTimes.current.get(event.id);
         const durationMs = startTime ? Date.now() - startTime : undefined;
         toolStartTimes.current.delete(event.id);
@@ -161,21 +220,28 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
           timestamp: formatTimestamp(),
           ...(durationMs !== undefined ? { durationMs } : {}),
         });
-      } else if (event.type === 'error') {
+        return;
+      }
+      if (event.type === 'error') {
+        flushThinking();
+        flushStreaming();
         append({ kind: 'error', title: 'error', body: event.message, timestamp: formatTimestamp() });
-      } else if (event.type === 'done') {
+        return;
+      }
+      if (event.type === 'done') {
+        flushThinking();
+        flushStreaming();
         setUsage(event.result.usage);
         if (event.result.cost) setSessionCost(event.result.cost);
-        const costStr = formatCost(event.result.cost);
-        append({
-          kind: 'system',
-          title: 'done',
-          body: `Iterations: ${event.result.iterations}${costStr ? ` · Cost: ${costStr}` : ''}`,
-          timestamp: formatTimestamp(),
-        });
+        // Cost lives in the persistent bottom usage bar — don't repeat it
+        // beneath every turn. We also drop the per-turn 'done' notice for
+        // single-iteration runs to keep the transcript Codex-clean.
+        if (event.result.iterations > 1) {
+          append({ kind: 'system', title: 'done', body: `${event.result.iterations} iterations`, timestamp: formatTimestamp() });
+        }
       }
     },
-    [addSessionMessages, append],
+    [addSessionMessages, append, flushStreaming, flushThinking],
   );
 
   const approveToolCall = useCallback(async (toolCall: ToolCall, tool: ToolDefinition): Promise<ToolApprovalDecision> => {
@@ -191,9 +257,10 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
       if (!command) return false;
 
       if (command.name === 'help') append({ kind: 'system', title: 'help', body: SLASH_COMMAND_HELP, timestamp: formatTimestamp() });
+      if (command.name === 'keys') append({ kind: 'system', title: 'shortcuts', body: KEYBOARD_SHORTCUTS, timestamp: formatTimestamp() });
       if (command.name === 'exit') exit();
       if (command.name === 'clear') {
-        setMessages([{ id: Date.now(), kind: 'system', title: 'cleared', body: 'Chat cleared. Type /help for commands.', timestamp: formatTimestamp() }]);
+        setMessages([{ id: Date.now(), kind: 'splash', title: '', body: SPLASH }]);
       }
       if (command.name === 'config') {
         void createConfigWizardState().then(setWizard).catch((error: unknown) => append({ kind: 'error', title: 'config', body: errorMessage(error) }));
@@ -422,13 +489,22 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
     [addSessionMessages, agent, append, approveToolCall, handleEvent, handleSlashCommand, pendingLines, running, session.messages, wizard],
   );
 
+  // Replace the prompt programmatically and remount the inner text input so
+  // the cursor lands at the end of the new value (instead of being stranded
+  // mid-string from a previous, unrelated cursor offset). Also resets history
+  // navigation state so subsequent typing creates a fresh entry.
+  const replacePrompt = useCallback((next: string) => {
+    setPrompt(next);
+    setInputKey((k) => k + 1);
+  }, []);
+
   useInput((input, key) => {
     // Ctrl+C: interrupt run, else exit.
     if (key.ctrl && input === 'c') {
       if (running) {
         append({ kind: 'system', title: 'interrupted', body: 'Stopping current run.', timestamp: formatTimestamp() });
         setRunning(false);
-        setStreamingText('');
+        flushStreaming();
         return;
       }
       try { setRawMode(false); } catch { /* ignore */ }
@@ -455,43 +531,48 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
     if (approval || running) return;
     // Ctrl+L: clear screen (== /clear).
     if (key.ctrl && input === 'l') {
-      setMessages([{ id: Date.now(), kind: 'system', title: 'cleared', body: 'Chat cleared. Type /help for commands.', timestamp: formatTimestamp() }]);
+      setMessages([{ id: Date.now(), kind: 'splash', title: '', body: SPLASH }]);
       return;
     }
     // Ctrl+U: clear current input.
     if (key.ctrl && input === 'u') {
-      setPrompt('');
+      replacePrompt('');
       setPendingLines([]);
+      setHistoryIndex(-1);
       return;
     }
     // Ctrl+W: delete previous word from current input.
     if (key.ctrl && input === 'w') {
-      setPrompt((current) => deletePreviousWord(current));
+      replacePrompt(deletePreviousWord(prompt));
       return;
     }
     // Tab: cycle through completions when there are multiple.
     if (key.tab) {
       const completed = completeSlashCommand(prompt, tabCycle);
       if (completed) {
-        setPrompt(completed);
+        replacePrompt(completed);
         setTabCycle((cycle) => cycle + 1);
       }
       return;
     }
-    if (key.upArrow && inputHistory.length > 0) {
+    if (key.upArrow) {
+      if (inputHistory.length === 0) return;
       const newIndex = historyIndex < 0 ? inputHistory.length - 1 : Math.max(0, historyIndex - 1);
       setHistoryIndex(newIndex);
-      setPrompt(inputHistory[newIndex] ?? '');
+      replacePrompt(inputHistory[newIndex] ?? '');
+      return;
     }
-    if (key.downArrow && historyIndex >= 0) {
+    if (key.downArrow) {
+      if (historyIndex < 0) return;
       const newIndex = historyIndex + 1;
       if (newIndex >= inputHistory.length) {
         setHistoryIndex(-1);
-        setPrompt('');
+        replacePrompt('');
       } else {
         setHistoryIndex(newIndex);
-        setPrompt(inputHistory[newIndex] ?? '');
+        replacePrompt(inputHistory[newIndex] ?? '');
       }
+      return;
     }
   });
 
@@ -504,30 +585,42 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
     : [];
   const suggestions = slashCommandSuggestions(prompt);
   const contextBar = formatContextStats(session.messages);
-  const top = topStatusLine(config, options.cwd, mode, branch, contextBar);
   const inputHint = pendingLines.length > 0 ? ` (line ${pendingLines.length + 1})` : '';
   const verb = activeTool ? `${verbForTool(activeTool.name)} ${activeTool.name}…` : mode === 'plan' ? 'Analyzing…' : 'Thinking…';
   const elapsed = activeTool ? formatDuration(now - activeTool.startedAt) : undefined;
+  const usageSummary = formatUsage(usage);
+  const costSummary = formatCost(sessionCost);
+  const handlePromptChange = useCallback(
+    (value: string) => {
+      setPrompt(value);
+      if (historyIndex !== -1) setHistoryIndex(-1);
+      if (tabCycle !== 0) setTabCycle(0);
+    },
+    [historyIndex, tabCycle],
+  );
 
   // Refresh branch indicator when something might have changed (lazy: every input cycle).
   if (branch === undefined) setBranch(detectBranch(options.cwd));
 
   return (
     <Box flexDirection="column">
-      <Box borderStyle="round" borderColor="cyan" paddingX={1}>
-        <Text>{top}</Text>
-      </Box>
       <Box flexDirection="column" minHeight={20} paddingX={1}>
         {messages.slice(-50).map((message) => (
           <TranscriptEntry key={message.id} message={message} />
         ))}
+        {streamingThinking ? (
+          <Box flexDirection="column">
+            <Text color="gray" bold>▎ thinking <Text dimColor>· streaming</Text></Text>
+            <Text dimColor>{streamingThinking}</Text>
+          </Box>
+        ) : null}
         {streamingText ? (
           <Box flexDirection="column">
             <Text color="cyan" bold>▎ mimo <Text dimColor>· streaming</Text></Text>
             <Text>{renderMarkdown(streamingText)}</Text>
           </Box>
         ) : null}
-        {running && !approval && !streamingText ? (
+        {running && !approval && !streamingText && !streamingThinking ? (
           <Text color="yellow">
             <Spinner type="dots" /> {verb}{elapsed ? ` ${elapsed}` : ''}
           </Text>
@@ -567,17 +660,65 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
           ) : null}
           <Box borderStyle="round" borderColor={wizard ? 'yellow' : modeBorderColor(mode)} paddingX={1}>
             <Text color={wizard ? 'yellow' : modeBorderColor(mode)}>{wizard ? wizardPrompt(wizard) : `▎ ${mode}${inputHint}`} </Text>
-            <TextInput value={prompt} onChange={setPrompt} onSubmit={submit} placeholder="message MiMo · /help · Tab completes · \\ continues line" />
+            <MimoTextInput
+              key={inputKey}
+              value={prompt}
+              onChange={handlePromptChange}
+              onSubmit={submit}
+              placeholder="message MiMo · / for commands · /keys for shortcuts · \\ for newline"
+            />
           </Box>
-          <Box paddingX={1}>
-            <Text dimColor>
-              {alwaysApprove ? 'auto-approve · ' : ''}{options.dryRun ? 'dry-run · ' : ''}{describeSandbox(sandbox)} · {config.model}
-            </Text>
-          </Box>
+          <BottomStatusBar
+            config={config}
+            cwd={options.cwd}
+            mode={mode}
+            branch={branch}
+            sandbox={sandbox}
+            contextBar={contextBar}
+            usageSummary={usageSummary}
+            costSummary={costSummary}
+            alwaysApprove={alwaysApprove}
+            dryRun={options.dryRun}
+          />
         </Box>
       )}
       {wizard ? <Text color="yellow">{wizard.error ? `Error: ${wizard.error}` : wizard.step === 'review' ? wizardSummary(wizard) : 'back / cancel / save'}</Text> : null}
-      <Text dimColor>Enter send · Tab cycle · ↑↓ history · Ctrl+L clear · Ctrl+U reset · Ctrl+W delete word · Esc {approval ? 'deny' : pendingLines.length ? 'reset' : 'quit'}</Text>
+    </Box>
+  );
+}
+
+interface BottomStatusBarProps {
+  config: RuntimeConfig;
+  cwd: string;
+  mode: InteractionMode;
+  branch: string | undefined;
+  sandbox: SandboxLevel;
+  contextBar: string;
+  usageSummary: string;
+  costSummary: string;
+  alwaysApprove: boolean;
+  dryRun: boolean | undefined;
+}
+
+/**
+ * Codex-style persistent status row, rendered directly under the input frame.
+ * Shows the active mode, model, sandbox, cwd, git branch, context utilization,
+ * token totals, and accumulated cost. We deliberately keep this on a single
+ * dim line so the transcript above it stays the visual focus.
+ */
+function BottomStatusBar(props: BottomStatusBarProps): React.ReactElement {
+  const { config, cwd, mode, branch, sandbox, contextBar, usageSummary, costSummary, alwaysApprove, dryRun } = props;
+  const segments = [MODE_LABELS[mode], config.model, describeSandbox(sandbox)];
+  if (alwaysApprove) segments.push('auto-approve');
+  if (dryRun) segments.push('dry-run');
+  segments.push(shortenPath(cwd));
+  if (branch) segments.push(`⎇ ${branch}`);
+  if (contextBar) segments.push(contextBar);
+  if (usageSummary) segments.push(usageSummary);
+  if (costSummary) segments.push(costSummary);
+  return (
+    <Box paddingX={1}>
+      <Text dimColor>{segments.join(' · ')}</Text>
     </Box>
   );
 }
@@ -694,5 +835,5 @@ function formatSessions(sessions: SessionRecord[]): string {
     .join('\n');
 }
 
-const _appendKinds: TranscriptKind[] = ['system', 'user', 'assistant', 'tool_call', 'tool_result', 'thinking', 'diff', 'error'];
+const _appendKinds: TranscriptKind[] = ['system', 'user', 'assistant', 'tool_call', 'tool_result', 'thinking', 'diff', 'error', 'splash'];
 void _appendKinds;
