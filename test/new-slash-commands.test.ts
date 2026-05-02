@@ -48,6 +48,11 @@ describe('new slash commands', () => {
     expect(parseSlashCommand('/init')).toEqual({ name: 'init', args: [] });
   });
 
+  it('parses workflow observability commands', () => {
+    expect(parseSlashCommand('/workflow')).toEqual({ name: 'workflow', args: [] });
+    expect(parseSlashCommand('/timeline')).toEqual({ name: 'timeline', args: [] });
+  });
+
   it('suggests new commands', () => {
     const suggestions = slashCommandSuggestions('/mo');
     expect(suggestions.some((s) => s.name === 'mode')).toBe(true);

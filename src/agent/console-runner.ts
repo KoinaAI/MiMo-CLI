@@ -30,13 +30,17 @@ export async function runConsoleAgent(
       spinner?.stop();
       spinner = undefined;
       if (event.type === 'assistant_thinking') {
-        console.log(chalk.gray.italic(`\n💭 ${event.content.slice(0, 200)}`));
+        console.log(chalk.gray.italic(`\n· ${event.content.slice(0, 200)}`));
       } else if (event.type === 'assistant_message') {
         console.log(chalk.cyan('\nMiMo:'), event.content);
       } else if (event.type === 'tool_call') {
-        console.log(chalk.yellow(`\n⚡ ${event.name}`), chalk.gray(JSON.stringify(event.input)));
+        console.log(chalk.yellow(`\n⏵ ${event.name}`), chalk.gray(JSON.stringify(event.input)));
       } else if (event.type === 'tool_result') {
         console.log(chalk.gray(truncate(event.content, 3000)));
+      } else if (event.type === 'hook_result') {
+        const status = event.cancelled ? 'blocked' : event.code === 0 ? 'ok' : `exit ${event.code ?? 'unknown'}`;
+        console.log(chalk.gray(`\nhook ${event.hook} [${event.event}] ${status}`));
+        if (event.output) console.log(chalk.gray(event.output));
       } else if (event.type === 'error') {
         console.log(chalk.red(event.message));
       }

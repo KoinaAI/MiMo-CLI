@@ -1,5 +1,6 @@
 import { CodingAgent } from './agent.js';
 import type { AgentEvent, AgentResult, RuntimeConfig, SubAgentConfig, ToolDefinition } from '../types.js';
+import { runHooks } from '../hooks.js';
 
 export interface SubAgentResult {
   task: string;
@@ -31,6 +32,7 @@ export async function runSubAgent(
       onEvent?.(event);
     },
   });
+  await runHooks(parentConfig.hooks, 'subagent_done', { cwd, prompt: subConfig.task, finalMessage: result.finalMessage });
   return { task: subConfig.task, result, events };
 }
 

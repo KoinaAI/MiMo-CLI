@@ -205,19 +205,39 @@ function parseHooks(value: unknown): PersistedConfig['hooks'] {
     }
     const args = parseStringArray(entry.args, `hooks[${index}].args`);
     const env = parseStringRecord(entry.env, `hooks[${index}].env`);
+    const matcher = optionalString(entry.matcher, `hooks[${index}].matcher`);
+    const allowTools = parseStringArray(entry.allowTools, `hooks[${index}].allowTools`);
+    const blockTools = parseStringArray(entry.blockTools, `hooks[${index}].blockTools`);
+    const timeoutMs = typeof entry.timeoutMs === 'number' ? entry.timeoutMs : undefined;
     return {
       name,
       event,
       command,
       ...(args ? { args } : {}),
       ...(env ? { env } : {}),
+      ...(matcher ? { matcher } : {}),
+      ...(allowTools ? { allowTools } : {}),
+      ...(blockTools ? { blockTools } : {}),
+      ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+      ...(typeof entry.continueOnCancel === 'boolean' ? { continueOnCancel: entry.continueOnCancel } : {}),
       ...(typeof entry.enabled === 'boolean' ? { enabled: entry.enabled } : {}),
     };
   });
 }
 
 function isHookEvent(value: string): value is HookEvent {
-  return ['session_start', 'user_prompt', 'before_tool', 'after_tool', 'agent_done'].includes(value);
+  return [
+    'session_start',
+    'user_prompt',
+    'before_tool',
+    'pre_tool_use',
+    'after_tool',
+    'post_tool_use',
+    'notification',
+    'stop',
+    'agent_done',
+    'subagent_done',
+  ].includes(value);
 }
 
 function parseStringArray(value: unknown, key: string): string[] | undefined {

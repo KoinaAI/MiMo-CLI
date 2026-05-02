@@ -85,6 +85,10 @@ export async function initProject(cwd: string, baseConfig?: { model?: string; ba
       mcpServers: [],
       skills: [],
       hooks: [],
+      workflow: {
+        defaultMode: 'agent',
+        recommendedChecks: ['npm run lint', 'npm run typecheck', 'npm test'],
+      },
     };
     await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, 'utf8');
     created.push(configPath);

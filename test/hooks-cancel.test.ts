@@ -42,4 +42,30 @@ describe('hooks cancel semantics', () => {
     expect(results).toHaveLength(1);
     expect(results[0]?.hook).toBe('always');
   });
+
+  it('supports allow and block tool filters', async () => {
+    const cwd = await mkdtemp(path.join(tmpdir(), 'mimo-hooks-filters-'));
+    const results = await runHooks(
+      [
+        { name: 'write-only', event: 'pre_tool_use', allowTools: ['write_*'], command: 'node', args: ['-e', 'process.exit(0)'] },
+        { name: 'not-shell', event: 'pre_tool_use', blockTools: ['run_shell'], command: 'node', args: ['-e', 'process.exit(0)'] },
+      ],
+      'pre_tool_use',
+      { cwd, toolName: 'write_file' },
+    );
+    expect(results.map((result) => result.hook)).toEqual(['write-only', 'not-shell']);
+  });
+
+  it('stops later hooks after cancellation by default', async () => {
+    const cwd = await mkdtemp(path.join(tmpdir(), 'mimo-hooks-stop-'));
+    const results = await runHooks(
+      [
+        { name: 'block', event: 'pre_tool_use', command: 'node', args: ['-e', 'process.exit(2)'] },
+        { name: 'later', event: 'pre_tool_use', command: 'node', args: ['-e', 'process.exit(0)'] },
+      ],
+      'pre_tool_use',
+      { cwd, toolName: 'run_shell' },
+    );
+    expect(results.map((result) => result.hook)).toEqual(['block']);
+  });
 });

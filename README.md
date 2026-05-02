@@ -286,6 +286,8 @@ Slash commands：
 | `/todo` | 显示 agent 任务清单 |
 | `/network [allow\|deny <host>]` | 查看或设置网络白名单/黑名单 |
 | `/export <path>` | 导出当前会话到 JSON |
+| `/workflow` | 总览 MCP、skills、hooks、subagents 与本地工具状态 |
+| `/timeline` | 显示当前会话最近活动时间线 |
 | `/mode [plan\|agent\|yolo]` | 切换交互模式（自动调整沙箱） |
 | `/status` | 显示运行时模型、会话、工具与 token 状态 |
 | `/clear` | 清空当前可见消息 |
@@ -354,8 +356,11 @@ CLI 在 agent 工具调用之前会按沙箱级别校验：
 `hooks` 现在支持以下事件：`session_start`、`user_prompt`、`before_tool`、`pre_tool_use`、`after_tool`、`post_tool_use`、`notification`、`stop`、`agent_done`、`subagent_done`。
 
 - 所有 hook 都会收到 `MIMO_HOOK_EVENT` 与 `MIMO_HOOK_PAYLOAD` 环境变量，并通过 stdin 收到一份 JSON payload。
+- 工具相关 hook 还会收到 `MIMO_TOOL_NAME`；stop hook 会收到 `MIMO_STOP_REASON`。
 - `pre_tool_use` 退出码为 `2` 时阻断当前工具调用；其它非零退出码视为软警告。
-- `matcher` 字段支持精确匹配工具名或 `prefix*` 通配，例如 `"matcher": "run_*"` 只在 shell/run 类工具上生效。
+- `matcher`、`allowTools`、`blockTools` 支持精确匹配工具名或 `prefix*` 通配，例如 `"matcher": "run_*"` 只在 shell/run 类工具上生效。
+- `timeoutMs` 可覆盖单个 hook 超时；`continueOnCancel: true` 可让后续 hook 在阻断后继续执行。
+- `mimo-code hooks run pre_tool_use --payload '{"toolName":"run_shell"}'` 可手动测试 hook 链路。
 
 #### MCP
 
@@ -470,8 +475,13 @@ Hooks 用于把 Agent 生命周期事件转发给本地命令。支持事件：
 | `session_start` | TUI 会话启动 |
 | `user_prompt` | 用户发送任务 |
 | `before_tool` | 工具调用前 |
+| `pre_tool_use` | 工具调用前，可用退出码 2 阻断 |
 | `after_tool` | 工具调用后 |
+| `post_tool_use` | 工具调用后兼容事件 |
+| `notification` | 通知类事件 |
+| `stop` | 用户中断或 agent 停止 |
 | `agent_done` | Agent 完成回答 |
+| `subagent_done` | Subagent 完成回答 |
 
 Hook 命令通过 `spawn(command, args)` 执行，工作目录为当前 workspace。环境变量：
 
@@ -479,6 +489,8 @@ Hook 命令通过 `spawn(command, args)` 执行，工作目录为当前 workspac
 | --- | --- |
 | `MIMO_HOOK_EVENT` | 当前事件名 |
 | `MIMO_HOOK_PAYLOAD` | JSON payload，包含 cwd、prompt、toolName、toolInput、toolOutput、finalMessage 等字段 |
+| `MIMO_TOOL_NAME` | 工具相关 hook 的工具名 |
+| `MIMO_STOP_REASON` | stop hook 的停止原因 |
 
 示例：
 

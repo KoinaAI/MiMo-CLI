@@ -1,5 +1,5 @@
 import { DEFAULT_BASE_URL, DEFAULT_MODEL, DEFAULT_TEMPERATURE, SUPPORTED_MODELS } from '../constants.js';
-import type { McpServerConfig, PersistedConfig, SkillConfig } from '../types.js';
+import type { HookEvent, McpServerConfig, PersistedConfig, SkillConfig } from '../types.js';
 import { readPersistedConfig, tokenPlanBaseUrl, userConfigPath, writeUserConfig } from './config.js';
 
 export type ConfigWizardStep =
@@ -188,5 +188,36 @@ function parseSkillsInput(input: string): SkillConfig[] {
 function parseHooksInput(input: string): PersistedConfig['hooks'] {
   const value = JSON.parse(input) as unknown;
   if (!Array.isArray(value)) throw new Error('Hook 配置必须是数组');
-  return value as PersistedConfig['hooks'];
+  return value.map((entry) => {
+    if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) throw new Error('Hook entry must be object');
+    const record = entry as {
+      name?: unknown;
+      event?: unknown;
+      command?: unknown;
+      args?: unknown;
+      env?: unknown;
+      enabled?: unknown;
+      matcher?: unknown;
+      allowTools?: unknown;
+      blockTools?: unknown;
+      timeoutMs?: unknown;
+      continueOnCancel?: unknown;
+    };
+    if (typeof record.name !== 'string' || typeof record.event !== 'string' || typeof record.command !== 'string') {
+      throw new Error('Hook requires name, event and command');
+    }
+    return {
+      name: record.name,
+      event: record.event as HookEvent,
+      command: record.command,
+      ...(Array.isArray(record.args) && record.args.every((arg) => typeof arg === 'string') ? { args: record.args } : {}),
+      ...(typeof record.env === 'object' && record.env !== null && !Array.isArray(record.env) ? { env: record.env as Record<string, string> } : {}),
+      ...(typeof record.enabled === 'boolean' ? { enabled: record.enabled } : {}),
+      ...(typeof record.matcher === 'string' ? { matcher: record.matcher } : {}),
+      ...(Array.isArray(record.allowTools) && record.allowTools.every((tool) => typeof tool === 'string') ? { allowTools: record.allowTools } : {}),
+      ...(Array.isArray(record.blockTools) && record.blockTools.every((tool) => typeof tool === 'string') ? { blockTools: record.blockTools } : {}),
+      ...(typeof record.timeoutMs === 'number' ? { timeoutMs: record.timeoutMs } : {}),
+      ...(typeof record.continueOnCancel === 'boolean' ? { continueOnCancel: record.continueOnCancel } : {}),
+    };
+  });
 }

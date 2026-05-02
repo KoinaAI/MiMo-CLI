@@ -36,12 +36,14 @@ export async function runHooks(
   const enabledHooks = (hooks ?? []).filter((hook) => {
     if (hook.enabled === false) return false;
     if (hook.event !== event) return false;
-    if (hook.matcher && payload.toolName && !matchHookTool(hook.matcher, payload.toolName)) return false;
+    if (!matchesToolFilters(hook, payload.toolName)) return false;
     return true;
   });
   const results: HookRunResult[] = [];
   for (const hook of enabledHooks) {
-    results.push(await runHook(hook, payload));
+    const result = await runHook(hook, payload);
+    results.push(result);
+    if (result.cancelled && hook.continueOnCancel !== true) break;
   }
   return results;
 }
@@ -50,11 +52,29 @@ export function wasCancelled(results: HookRunResult[]): boolean {
   return results.some((result) => result.cancelled);
 }
 
+export function describeHookConfig(hook: HookConfig): string {
+  const filters: string[] = [];
+  if (hook.matcher) filters.push(`matcher=${hook.matcher}`);
+  if (hook.allowTools?.length) filters.push(`allow=${hook.allowTools.join(',')}`);
+  if (hook.blockTools?.length) filters.push(`block=${hook.blockTools.join(',')}`);
+  if (hook.timeoutMs !== undefined) filters.push(`timeout=${hook.timeoutMs}ms`);
+  return `${hook.name} [${hook.event}]${filters.length > 0 ? ` (${filters.join(' · ')})` : ''} — ${hook.command} ${(hook.args ?? []).join(' ')}`.trim();
+}
+
 function matchHookTool(matcher: string, toolName: string): boolean {
   if (matcher === '*') return true;
   if (matcher === toolName) return true;
   if (matcher.endsWith('*') && toolName.startsWith(matcher.slice(0, -1))) return true;
   return false;
+}
+
+function matchesToolFilters(hook: HookConfig, toolName: string | undefined): boolean {
+  if (!hook.matcher && !hook.allowTools && !hook.blockTools) return true;
+  if (!toolName) return hook.matcher === undefined && hook.allowTools === undefined && hook.blockTools === undefined;
+  if (hook.matcher && !matchHookTool(hook.matcher, toolName)) return false;
+  if (hook.allowTools && !hook.allowTools.some((matcher) => matchHookTool(matcher, toolName))) return false;
+  if (hook.blockTools?.some((matcher) => matchHookTool(matcher, toolName))) return false;
+  return true;
 }
 
 function runHook(hook: HookConfig, payload: HookPayload): Promise<HookRunResult> {
@@ -68,6 +88,9 @@ function runHook(hook: HookConfig, payload: HookPayload): Promise<HookRunResult>
         ...hook.env,
         MIMO_HOOK_EVENT: hook.event,
         MIMO_HOOK_PAYLOAD: JSON.stringify(payload),
+        ...(payload.toolName ? { MIMO_TOOL_NAME: payload.toolName } : {}),
+        ...(payload.prompt ? { MIMO_USER_PROMPT: payload.prompt } : {}),
+        ...(payload.reason ? { MIMO_STOP_REASON: payload.reason } : {}),
       },
     });
 

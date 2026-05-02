@@ -7,11 +7,11 @@ import { createSubAgentTool } from './agent/subagent.js';
 import { createNamedSubagentTool, discoverNamedSubagents } from './agent/named-subagents.js';
 import { configureInteractively } from './config/interactive.js';
 import { DEFAULT_MAX_TOKENS, DEFAULT_TEMPERATURE, SUPPORTED_MODELS } from './constants.js';
-import { loadConfig, tokenPlanBaseUrl } from './config/config.js';
-import { runHooks } from './hooks.js';
+import { envToConfig, loadConfig, projectConfigPath, readPersistedConfig, tokenPlanBaseUrl, userConfigPath } from './config/config.js';
+import { describeHookConfig, runHooks } from './hooks.js';
 import { createMcpTools } from './mcp/stdio.js';
 import { defaultTools } from './tools/index.js';
-import type { ApiFormat, InteractionMode, PersistedConfig, SandboxLevel } from './types.js';
+import type { ApiFormat, HookEvent, HookPayload, InteractionMode, PersistedConfig, SandboxLevel } from './types.js';
 import { errorMessage } from './utils/errors.js';
 import { runTui } from './ui/tui.js';
 
@@ -92,7 +92,7 @@ mcpCmd
   .description('List configured MCP servers')
   .option('-C, --cwd <path>', 'workspace directory', process.cwd())
   .action(async (options) => {
-    const config = await loadConfig(options.cwd ?? process.cwd());
+    const config = await loadWorkflowConfig(options.cwd ?? process.cwd());
     const servers = config.mcpServers ?? [];
     if (servers.length === 0) {
       console.log('No MCP servers configured.');
@@ -113,7 +113,7 @@ skillsCmd
   .description('List configured skills')
   .option('-C, --cwd <path>', 'workspace directory', process.cwd())
   .action(async (options) => {
-    const config = await loadConfig(options.cwd ?? process.cwd());
+    const config = await loadWorkflowConfig(options.cwd ?? process.cwd());
     const skills = config.skills ?? [];
     if (skills.length === 0) {
       console.log('No skills configured.');
@@ -165,7 +165,7 @@ hooksCmd
   .description('List configured hooks')
   .option('-C, --cwd <path>', 'workspace directory', process.cwd())
   .action(async (options) => {
-    const config = await loadConfig(options.cwd ?? process.cwd());
+    const config = await loadWorkflowConfig(options.cwd ?? process.cwd());
     const hooks = config.hooks ?? [];
     if (hooks.length === 0) {
       console.log('No hooks configured.');
@@ -173,7 +173,34 @@ hooksCmd
     }
     for (const hook of hooks) {
       const status = hook.enabled === false ? chalk.red('[disabled]') : chalk.green('[enabled]');
-      console.log(`  ${status} ${chalk.bold(hook.name)} [${hook.event}] — ${hook.command} ${(hook.args ?? []).join(' ')}`);
+      console.log(`  ${status} ${describeHookConfig(hook)}`);
+    }
+  });
+
+hooksCmd
+  .command('run <event>')
+  .description('Run configured hooks for an event with an optional JSON payload')
+  .option('-C, --cwd <path>', 'workspace directory', process.cwd())
+  .option('--payload <json>', 'JSON payload object', '{}')
+  .action(async (event: string, options) => {
+    try {
+      const cwd = options.cwd ?? process.cwd();
+      const config = await loadWorkflowConfig(cwd);
+      const payload = parseHookPayload(options.payload, cwd);
+      if (!isHookEventName(event)) throw new Error(`Unsupported hook event: ${event}`);
+      const results = await runHooks(config.hooks, event, payload);
+      if (results.length === 0) {
+        console.log(chalk.gray('No hooks matched.'));
+        return;
+      }
+      for (const result of results) {
+        const status = result.cancelled ? chalk.red('blocked') : result.code === 0 ? chalk.green('ok') : chalk.yellow(`exit ${result.code ?? 'unknown'}`);
+        console.log(`${status} ${result.hook} [${result.event}]`);
+        if (result.output.trim()) console.log(chalk.gray(result.output.trim()));
+      }
+    } catch (error) {
+      console.error(chalk.red(errorMessage(error)));
+      process.exitCode = 1;
     }
   });
 
@@ -276,6 +303,16 @@ async function runInteractive(options: CliOptions): Promise<void> {
   }
 }
 
+async function loadWorkflowConfig(cwd: string): Promise<PersistedConfig> {
+  const userConfig = await readPersistedConfig(userConfigPath());
+  const projectConfig = await readPersistedConfig(projectConfigPath(cwd));
+  return {
+    ...userConfig,
+    ...projectConfig,
+    ...envToConfig(),
+  };
+}
+
 function parseOverrides(options: CliOptions): PersistedConfig {
   const overrides: PersistedConfig = {};
   if (options.model) overrides.model = options.model;
@@ -311,6 +348,39 @@ function parseNonNegativeNumber(value: string, name: string): number {
     throw new Error(`${name} must be a non-negative number`);
   }
   return parsed;
+}
+
+function isHookEventName(value: string): value is HookEvent {
+  return [
+    'session_start',
+    'user_prompt',
+    'before_tool',
+    'pre_tool_use',
+    'after_tool',
+    'post_tool_use',
+    'notification',
+    'stop',
+    'agent_done',
+    'subagent_done',
+  ].includes(value);
+}
+
+function parseHookPayload(raw: string, cwd: string): HookPayload {
+  const parsed = JSON.parse(raw) as unknown;
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new Error('--payload must be a JSON object');
+  }
+  const record = parsed as Partial<HookPayload>;
+  return {
+    cwd,
+    ...(typeof record.prompt === 'string' ? { prompt: record.prompt } : {}),
+    ...(typeof record.toolName === 'string' ? { toolName: record.toolName } : {}),
+    ...(typeof record.toolInput === 'object' && record.toolInput !== null && !Array.isArray(record.toolInput) ? { toolInput: record.toolInput as Record<string, unknown> } : {}),
+    ...(typeof record.toolOutput === 'string' ? { toolOutput: record.toolOutput } : {}),
+    ...(typeof record.finalMessage === 'string' ? { finalMessage: record.finalMessage } : {}),
+    ...(typeof record.notification === 'string' ? { notification: record.notification } : {}),
+    ...(typeof record.reason === 'string' ? { reason: record.reason } : {}),
+  };
 }
 
 interface CliOptions {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { statusLine, formatThinkingBlock, formatToolCallHeader, formatToolResult, formatDiffOutput, modeIndicator, SPLASH, MODE_LABELS } from '../src/ui/theme.js';
+import { statusLine, formatThinkingBlock, formatToolCallHeader, formatToolResult, formatDiffOutput, modeIndicator, SPLASH, MODE_LABELS, formatWorkflowSummary } from '../src/ui/theme.js';
 import type { RuntimeConfig, SessionRecord, ToolDefinition } from '../src/types.js';
 
 const config: RuntimeConfig = {
@@ -46,9 +46,9 @@ describe('theme', () => {
     expect(line).toContain('$');
   });
 
-  it('formatThinkingBlock wraps with emoji', () => {
+  it('formatThinkingBlock wraps thinking lines', () => {
     const result = formatThinkingBlock('I need to analyze this');
-    expect(result).toContain('💭');
+    expect(result).toContain('·');
     expect(result).toContain('analyze');
   });
 
@@ -72,8 +72,23 @@ describe('theme', () => {
   });
 
   it('modeIndicator shows icon and label', () => {
-    expect(modeIndicator('plan')).toContain('🔍');
-    expect(modeIndicator('agent')).toContain('🤖');
-    expect(modeIndicator('yolo')).toContain('⚡');
+    expect(modeIndicator('plan')).toContain('◇');
+    expect(modeIndicator('agent')).toContain('◆');
+    expect(modeIndicator('yolo')).toContain('▲');
+  });
+
+  it('formats workflow summary counts', () => {
+    const summary = formatWorkflowSummary({
+      builtinTools: 10,
+      mcpServers: 1,
+      mcpTools: 2,
+      configuredSkills: 3,
+      discoveredSkills: 4,
+      hooks: 5,
+      subagents: 6,
+    });
+    expect(summary).toContain('MCP tools');
+    expect(summary).toContain('2');
+    expect(summary).toContain('Named subagents');
   });
 });
