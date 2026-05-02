@@ -31,7 +31,8 @@ export type SlashCommandName =
   | 'todo'
   | 'network'
   | 'export'
-  | 'keys';
+  | 'keys'
+  | 'edit';
 
 export interface SlashCommandSpec {
   name: SlashCommandName;
@@ -78,6 +79,7 @@ export const SLASH_COMMANDS: SlashCommandSpec[] = [
   { name: 'network', usage: '/network [allow|deny <host>]', description: 'Show or configure network access policy' },
   { name: 'export', usage: '/export <path>', description: 'Export current session to a JSON file' },
   { name: 'keys', usage: '/keys', description: 'Show keyboard shortcuts' },
+  { name: 'edit', usage: '/edit', description: 'Compose the next prompt in $EDITOR' },
 ];
 
 export const SLASH_COMMAND_HELP = SLASH_COMMANDS.map((command) => `${command.usage.padEnd(40)} ${command.description}`).join('\n');

@@ -21,6 +21,15 @@ export interface MimoTextInputProps {
   showCursor?: boolean;
   onChange(value: string): void;
   onSubmit?(value: string): void;
+  /** Reports the current cursor offset every time it moves. Used by the
+   * parent to drive `@`-mention suggestion popups, which need to know the
+   * caret position to detect the active mention token. */
+  onCursorChange?(cursor: number): void;
+  /** Optional override that lets the parent reposition the cursor when it
+   * programmatically rewrites the value (e.g. after accepting a mention
+   * completion). Setting this to a number forces the internal cursor to
+   * that offset on the next render. */
+  cursorOverride?: number | undefined;
 }
 
 export function MimoTextInput({
@@ -30,12 +39,23 @@ export function MimoTextInput({
   showCursor = true,
   onChange,
   onSubmit,
+  onCursorChange,
+  cursorOverride,
 }: MimoTextInputProps): React.ReactElement {
   const [cursor, setCursor] = useState(value.length);
 
   useEffect(() => {
     setCursor((current) => Math.min(current, value.length));
   }, [value.length]);
+
+  useEffect(() => {
+    if (cursorOverride === undefined) return;
+    setCursor(Math.max(0, Math.min(value.length, cursorOverride)));
+  }, [cursorOverride, value.length]);
+
+  useEffect(() => {
+    onCursorChange?.(cursor);
+  }, [cursor, onCursorChange]);
 
   useInput(
     (input, key) => {
