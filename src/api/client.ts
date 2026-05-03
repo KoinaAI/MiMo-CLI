@@ -20,6 +20,7 @@ export class MiMoClient {
   }
 
   private async completeAnthropic(messages: ChatMessage[], tools: ToolDefinition[]): Promise<AssistantResponse> {
+    const { system, messages: anthropicMessages } = buildAnthropicPayload(messages, this.config.systemPrompt);
     const response = await fetch(`${this.config.baseUrl}/anthropic/v1/messages`, {
       method: 'POST',
       headers: {
@@ -28,8 +29,8 @@ export class MiMoClient {
       },
       body: JSON.stringify({
         model: this.config.model,
-        system: this.config.systemPrompt,
-        messages: toAnthropicMessages(messages),
+        ...(system !== undefined ? { system } : {}),
+        messages: anthropicMessages,
         tools: toAnthropicTools(tools),
         temperature: this.config.temperature,
         max_tokens: this.config.maxTokens,
@@ -40,6 +41,7 @@ export class MiMoClient {
   }
 
   private async completeAnthropicStreaming(messages: ChatMessage[], tools: ToolDefinition[], callbacks: StreamCallbacks): Promise<AssistantResponse> {
+    const { system, messages: anthropicMessages } = buildAnthropicPayload(messages, this.config.systemPrompt);
     const response = await fetch(`${this.config.baseUrl}/anthropic/v1/messages`, {
       method: 'POST',
       headers: {
@@ -48,8 +50,8 @@ export class MiMoClient {
       },
       body: JSON.stringify({
         model: this.config.model,
-        system: this.config.systemPrompt,
-        messages: toAnthropicMessages(messages),
+        ...(system !== undefined ? { system } : {}),
+        messages: anthropicMessages,
         tools: toAnthropicTools(tools),
         temperature: this.config.temperature,
         max_tokens: this.config.maxTokens,
@@ -170,6 +172,24 @@ async function parseResponse(response: Response): Promise<Record<string, unknown
     throw new MiMoCliError('API returned an invalid JSON payload');
   }
   return json;
+}
+
+function buildAnthropicPayload(
+  messages: ChatMessage[],
+  baseSystem: string | undefined,
+): { system: string | undefined; messages: Record<string, unknown>[] } {
+  const systemParts: string[] = [];
+  if (baseSystem) systemParts.push(baseSystem);
+  for (const message of messages) {
+    if (message.role !== 'system') continue;
+    if (!message.content) continue;
+    if (systemParts.includes(message.content)) continue;
+    systemParts.push(message.content);
+  }
+  return {
+    system: systemParts.length > 0 ? systemParts.join('\n\n') : undefined,
+    messages: toAnthropicMessages(messages),
+  };
 }
 
 function toAnthropicMessages(messages: ChatMessage[]): Record<string, unknown>[] {

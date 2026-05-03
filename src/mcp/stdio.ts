@@ -192,7 +192,12 @@ export class McpStdioClient {
   }
 
   private handleMessage(line: string): void {
-    const message = JSON.parse(line) as unknown;
+    let message: unknown;
+    try {
+      message = JSON.parse(line);
+    } catch {
+      return;
+    }
     if (!isRecord(message) || typeof message.id !== 'number') return;
     const pending = this.pending.get(message.id);
     if (!pending) return;

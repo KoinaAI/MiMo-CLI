@@ -28,10 +28,10 @@ export const readManyFilesTool: ToolDefinition = {
       return 'Error: paths must be a non-empty array of file paths';
     }
     const paths = rawPaths.slice(0, MAX_FILES).map((p) => String(p));
-    if (rawPaths.length > MAX_FILES) {
-      paths.push(`... and ${rawPaths.length - MAX_FILES} more (capped at ${MAX_FILES})`);
-    }
     const sections: string[] = [];
+    if (rawPaths.length > MAX_FILES) {
+      sections.push(`[note: ${rawPaths.length - MAX_FILES} additional path(s) skipped, capped at ${MAX_FILES}]`);
+    }
     let totalSize = 0;
 
     for (const filePath of paths) {

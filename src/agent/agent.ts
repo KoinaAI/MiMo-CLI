@@ -203,9 +203,9 @@ function contextMessages(config: RuntimeConfig, skillContext: string, projectCon
   const context: string[] = [];
   if (projectContext) context.push(projectContext);
   if (config.mcpServers && config.mcpServers.length > 0) {
-    context.push(`Configured MCP servers:\\n${JSON.stringify(config.mcpServers.filter((server) => server.enabled !== false), null, 2)}`);
+    context.push(`Configured MCP servers:\n${JSON.stringify(config.mcpServers.filter((server) => server.enabled !== false), null, 2)}`);
   }
-  if (skillContext) context.push(`Loaded skills:\\n${skillContext}`);
+  if (skillContext) context.push(`Loaded skills:\n${skillContext}`);
   if (context.length === 0) return [];
   return [{ role: 'system', content: context.join('\n\n') }];
 }

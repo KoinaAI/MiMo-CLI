@@ -30,4 +30,14 @@ describe('read_many_files tool', () => {
   it('is read-only', () => {
     expect(readManyFilesTool.readOnly).toBe(true);
   });
+
+  it('does not treat the cap-message as a path when paths exceed the limit', async () => {
+    const tooMany = Array.from({ length: 25 }, () => 'package.json');
+    const result = await readManyFilesTool.run({ paths: tooMany }, context);
+    expect(result).toContain('package.json');
+    expect(result).toContain('capped at 20');
+    // The cap warning must not appear as a section header (which would imply
+    // it was passed through resolveWorkspacePath / readFile).
+    expect(result).not.toMatch(/--- \.\.\. and \d+ more/);
+  });
 });
