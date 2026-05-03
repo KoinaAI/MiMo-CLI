@@ -86,7 +86,13 @@ interface TuiAppProps {
 type ConfigWizard = Awaited<ReturnType<typeof createConfigWizardState>>;
 
 export async function runTui(config: RuntimeConfig, tools: ToolDefinition[], options: AgentOptions): Promise<void> {
-  const instance = render(<TuiApp config={config} tools={tools} options={options} />, { patchConsole: false });
+  // exitOnCtrlC=false hands Ctrl+C to our useInput handler so we can do
+  // codex-style double-tap-to-quit instead of slamming the user back to
+  // bash on a single tap.
+  const instance = render(
+    <TuiApp config={config} tools={tools} options={options} />,
+    { patchConsole: false, exitOnCtrlC: false },
+  );
   await instance.waitUntilExit();
 }
 
