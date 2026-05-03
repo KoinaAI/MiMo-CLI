@@ -56,19 +56,19 @@ export function wizardPrompt(state: ConfigWizardState): string {
     case 'model':
       return `Model：${SUPPORTED_MODELS.join(' / ')}`;
     case 'maxTokens':
-      return 'Max output tokens（留空自动）';
+      return 'Max output tokens (leave blank for auto)';
     case 'temperature':
       return 'Temperature';
     case 'systemPrompt':
-      return 'Instructions（留空跳过）';
+      return 'Instructions (leave blank to skip)';
     case 'mcpServers':
-      return 'MCP servers JSON array（留空跳过）';
+      return 'MCP servers JSON array (leave blank to skip)';
     case 'skills':
-      return 'Skills JSON array（留空跳过）';
+      return 'Skills JSON array (leave blank to skip)';
     case 'hooks':
-      return 'Hooks JSON array（留空跳过）';
+      return 'Hooks JSON array (leave blank to skip)';
     case 'review':
-      return '输入 save 保存 settings，back 返回，cancel 取消';
+      return 'Type save to save settings, back to go back, cancel to cancel';
   }
 }
 
@@ -98,31 +98,31 @@ export function updateWizard(state: ConfigWizardState, rawInput: string): Config
       if (input === 'api' || input === '') return next(state, 'format', { baseUrl: DEFAULT_BASE_URL });
       if (input === 'token') return next(state, 'tokenRegion', {});
       if (input === 'custom') return next(state, 'customBaseUrl', {});
-      return withError(state, '请输入 api / token / custom');
+      return withError(state, 'Please enter api / token / custom');
     }
     if (state.step === 'tokenRegion') {
       return next(state, 'format', { baseUrl: tokenPlanBaseUrl(input) });
     }
     if (state.step === 'customBaseUrl') {
-      if (!URL.canParse(input)) return withError(state, '请输入合法 URL');
+      if (!URL.canParse(input)) return withError(state, 'Please enter a valid URL');
       return next(state, 'format', { baseUrl: input });
     }
     if (state.step === 'format') {
-      if (input !== 'openai' && input !== 'anthropic') return withError(state, '请输入 openai 或 anthropic');
+      if (input !== 'openai' && input !== 'anthropic') return withError(state, 'Please enter openai or anthropic');
       return next(state, 'model', { format: input });
     }
     if (state.step === 'model') {
-      if (!SUPPORTED_MODELS.includes(input as (typeof SUPPORTED_MODELS)[number])) return withError(state, '不支持的模型');
+      if (!SUPPORTED_MODELS.includes(input as (typeof SUPPORTED_MODELS)[number])) return withError(state, 'Unsupported model');
       return next(state, 'maxTokens', { model: input });
     }
     if (state.step === 'maxTokens') {
       const maxTokens = input ? Number.parseInt(input, 10) : undefined;
-      if (maxTokens !== undefined && (!Number.isInteger(maxTokens) || maxTokens <= 0)) return withError(state, '请输入正整数');
+      if (maxTokens !== undefined && (!Number.isInteger(maxTokens) || maxTokens <= 0)) return withError(state, 'Please enter a positive integer');
       return next(state, 'temperature', maxTokens ? { maxTokens } : {});
     }
     if (state.step === 'temperature') {
       const temperature = input ? Number.parseFloat(input) : DEFAULT_TEMPERATURE;
-      if (!Number.isFinite(temperature) || temperature < 0) return withError(state, '请输入非负数字');
+      if (!Number.isFinite(temperature) || temperature < 0) return withError(state, 'Please enter a non-negative number');
       return next(state, 'systemPrompt', { temperature });
     }
     if (state.step === 'systemPrompt') {
@@ -187,19 +187,19 @@ function previousStep(step: ConfigWizardStep): ConfigWizardStep {
 
 function parseMcpServersInput(input: string): McpServerConfig[] {
   const value = JSON.parse(input) as unknown;
-  if (!Array.isArray(value)) throw new Error('MCP 配置必须是数组');
+  if (!Array.isArray(value)) throw new Error('MCP config must be an array');
   return value as McpServerConfig[];
 }
 
 function parseSkillsInput(input: string): SkillConfig[] {
   const value = JSON.parse(input) as unknown;
-  if (!Array.isArray(value)) throw new Error('Skill 配置必须是数组');
+  if (!Array.isArray(value)) throw new Error('Skill config must be an array');
   return value as SkillConfig[];
 }
 
 function parseHooksInput(input: string): PersistedConfig['hooks'] {
   const value = JSON.parse(input) as unknown;
-  if (!Array.isArray(value)) throw new Error('Hook 配置必须是数组');
+  if (!Array.isArray(value)) throw new Error('Hook config must be an array');
   return value.map((entry) => {
     if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) throw new Error('Hook entry must be object');
     const record = entry as {
