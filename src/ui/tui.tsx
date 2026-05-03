@@ -923,9 +923,6 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
 
   return (
     <Box flexDirection="column">
-      <Box paddingX={1}>
-        <Text>{topStatusLine(runtimeConfig, cwd, mode, branch, contextBar)}</Text>
-      </Box>
       <Box flexDirection="column" paddingX={1}>
         {messages.slice(-28).map((message) => (
           <TranscriptEntry key={message.id} message={message} />
@@ -1073,6 +1070,8 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
             dryRun={options.dryRun}
             mcpToolCount={mcpToolCount}
             skillCount={enabledConfigSkills + discoveredSkillsCount}
+            mode={mode}
+            contextBar={contextBar}
           />
         </Box>
       )}
@@ -1089,29 +1088,32 @@ interface BottomStatusBarProps {
   dryRun: boolean | undefined;
   mcpToolCount: number;
   skillCount: number;
+  mode: InteractionMode;
+  contextBar: string;
 }
 
 /**
  * Persistent two-row status bar rendered directly under the input frame.
  *
- * Row 1 lists the runtime/workflow segments (model format, max tokens, MCP
- * count, skills, sandbox flags, cwd, git branch). Row 2 surfaces the most
- * useful keyboard shortcuts so newcomers don't have to chase /keys. Both
- * rows are dim so they stay subordinate to the transcript above.
+ * Row 1 carries the brand-led status line (mode, model, cwd, branch,
+ * context utilization) that used to live above the transcript.
+ * Row 2 lists runtime/workflow segments (max tokens, MCP, skills, sandbox
+ * flags, repo path, git branch). Both rows stay dim so they remain
+ * subordinate to the transcript above.
  */
 function BottomStatusBar(props: BottomStatusBarProps): React.ReactElement {
-  const { config, cwd, branch, alwaysApprove, dryRun, mcpToolCount, skillCount } = props;
-  const segments: string[] = ['anthropic', `max ${config.maxTokens.toLocaleString()}`];
+  const { config, cwd, branch, alwaysApprove, dryRun, mcpToolCount, skillCount, mode, contextBar } = props;
+  const segments: string[] = [`max ${config.maxTokens.toLocaleString()}`];
   if (mcpToolCount > 0) segments.push(`${mcpToolCount} MCP`);
   if (skillCount > 0) segments.push(`${skillCount} skills`);
   if (alwaysApprove) segments.push('auto-approve');
   if (dryRun) segments.push('dry-run');
-  segments.push(shortenPath(cwd));
-  if (branch) segments.push(`⎇ ${branch}`);
-  const shortcuts = 'enter send · shift+tab mode · ctrl+c interrupt · /help · /info';
+  segments.push('enter send');
+  segments.push('shift+tab mode');
+  segments.push('ctrl+c interrupt');
   return (
     <Box flexDirection="column" paddingX={1}>
-      <Text dimColor>{shortcuts}</Text>
+      <Text>{topStatusLine(config, cwd, mode, branch, contextBar)}</Text>
       <Text dimColor>{segments.join(' · ')}</Text>
     </Box>
   );
