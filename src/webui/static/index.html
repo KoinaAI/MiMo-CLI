@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark light" />
+    <meta name="referrer" content="no-referrer" />
+    <title>MiMo Code · Web UI</title>
+    <link rel="icon" type="image/svg+xml" href="/assets/icon.svg" />
+    <link rel="stylesheet" href="/app.css" />
+  </head>
+  <body>
+    <div id="app" data-state="loading">
+      <aside class="sidebar" aria-label="Sessions">
+        <header class="sidebar-header">
+          <a class="brand" href="/" aria-label="MiMo Code">
+            <span class="brand-mark" aria-hidden="true">
+              <svg width="28" height="28" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
+                <defs>
+                  <linearGradient id="brand-grad" x1="0" y1="0" x2="32" y2="32" gradientUnits="userSpaceOnUse">
+                    <stop offset="0" stop-color="#FF8E53" />
+                    <stop offset="1" stop-color="#FF4F8B" />
+                  </linearGradient>
+                </defs>
+                <rect x="2" y="2" width="28" height="28" rx="8" fill="url(#brand-grad)" />
+                <path d="M8 22V10l4 6 4-6 4 6 4-6v12" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" fill="none" />
+              </svg>
+            </span>
+            <span class="brand-text">
+              <span class="brand-title">MiMo Code</span>
+              <span class="brand-subtitle">Web UI</span>
+            </span>
+          </a>
+          <button id="new-session-btn" class="btn btn-primary" type="button">
+            <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
+              <path d="M7 1.5v11M1.5 7h11" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+            </svg>
+            New chat
+          </button>
+        </header>
+        <nav class="session-list" id="session-list" aria-label="Saved sessions">
+          <div class="session-empty">No saved sessions yet.</div>
+        </nav>
+        <footer class="sidebar-footer">
+          <div class="footer-row">
+            <span class="footer-label">cwd</span>
+            <span class="footer-value" id="footer-cwd" title="">—</span>
+          </div>
+          <div class="footer-row">
+            <span class="footer-label">model</span>
+            <select id="model-select" class="model-select" aria-label="Model"></select>
+          </div>
+          <div class="footer-row mode-row">
+            <span class="footer-label">mode</span>
+            <div class="mode-toggle" role="tablist" aria-label="Interaction mode">
+              <button class="mode-btn" role="tab" data-mode="plan" type="button">Plan</button>
+              <button class="mode-btn" role="tab" data-mode="agent" type="button" aria-selected="true">Agent</button>
+              <button class="mode-btn" role="tab" data-mode="yolo" type="button">Yolo</button>
+            </div>
+          </div>
+          <div class="footer-row">
+            <span class="footer-label">sandbox</span>
+            <select id="sandbox-select" class="model-select" aria-label="Sandbox level">
+              <option value="read-only">read-only</option>
+              <option value="workspace-write">workspace-write</option>
+              <option value="danger-full-access">danger-full-access</option>
+            </select>
+          </div>
+        </footer>
+      </aside>
+
+      <main class="main">
+        <header class="topbar" role="banner">
+          <div class="topbar-left">
+            <h1 class="session-title" id="session-title">New chat</h1>
+            <div class="session-meta" id="session-meta"></div>
+          </div>
+          <div class="topbar-right">
+            <span class="badge mode-badge" id="mode-badge">AGENT</span>
+            <span class="badge model-badge" id="model-badge">mimo-v2.5-pro</span>
+            <span class="badge stat-badge" id="usage-badge" hidden>0 tokens</span>
+            <span class="badge stat-badge" id="cost-badge" hidden></span>
+            <span class="badge connection-badge" id="connection-badge" data-state="connecting" title="Stream status">connecting…</span>
+          </div>
+        </header>
+
+        <section class="messages" id="messages" aria-live="polite" aria-label="Conversation">
+          <div class="empty-state" id="empty-state">
+            <div class="empty-art" aria-hidden="true">
+              <svg width="72" height="72" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
+                <defs>
+                  <linearGradient id="empty-grad" x1="0" y1="0" x2="32" y2="32" gradientUnits="userSpaceOnUse">
+                    <stop offset="0" stop-color="#FF8E53" />
+                    <stop offset="1" stop-color="#FF4F8B" />
+                  </linearGradient>
+                </defs>
+                <rect x="2" y="2" width="28" height="28" rx="9" fill="url(#empty-grad)" opacity="0.18" />
+                <path d="M8 22V10l4 6 4-6 4 6 4-6v12" stroke="url(#empty-grad)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" fill="none" />
+              </svg>
+            </div>
+            <h2 class="empty-title">Welcome to MiMo Code</h2>
+            <p class="empty-tagline">An intelligent coding agent that reads, edits, and runs code right inside your workspace.</p>
+            <div class="empty-suggestions" id="empty-suggestions">
+              <button class="suggestion" type="button" data-prompt="Summarise the architecture of this repository.">
+                <span class="suggestion-tag">Explore</span>
+                <span class="suggestion-text">Summarise the architecture of this repository.</span>
+              </button>
+              <button class="suggestion" type="button" data-prompt="Run the test suite and report any failures.">
+                <span class="suggestion-tag">Run</span>
+                <span class="suggestion-text">Run the test suite and report any failures.</span>
+              </button>
+              <button class="suggestion" type="button" data-prompt="Refactor the largest function in the codebase for readability.">
+                <span class="suggestion-tag">Refactor</span>
+                <span class="suggestion-text">Refactor the largest function in the codebase.</span>
+              </button>
+              <button class="suggestion" type="button" data-prompt="What does this project do? Walk me through the entrypoint.">
+                <span class="suggestion-tag">Explain</span>
+                <span class="suggestion-text">Walk me through the entrypoint.</span>
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <footer class="composer" id="composer">
+          <div class="composer-status" id="composer-status">
+            <span class="status-dot" data-state="idle" aria-hidden="true"></span>
+            <span class="status-text" id="status-text">Idle</span>
+            <button id="cancel-btn" class="btn btn-ghost" type="button" hidden>Stop</button>
+          </div>
+          <form id="composer-form" class="composer-form">
+            <textarea
+              id="composer-input"
+              class="composer-input"
+              rows="1"
+              placeholder="Ask MiMo to read code, edit a file, or run a command…"
+              autocomplete="off"
+              spellcheck="false"
+            ></textarea>
+            <div class="composer-actions">
+              <span class="composer-hint">Enter to send · Shift+Enter for newline</span>
+              <button id="send-btn" class="btn btn-primary" type="submit" disabled>
+                Send
+                <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
+                  <path d="M2 6h7M6 2.5L9.5 6 6 9.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" fill="none" />
+                </svg>
+              </button>
+            </div>
+          </form>
+        </footer>
+      </main>
+    </div>
+
+    <dialog id="approval-dialog" class="dialog" aria-labelledby="approval-title">
+      <form method="dialog" class="dialog-body">
+        <h2 class="dialog-title" id="approval-title">Approve tool call</h2>
+        <p class="dialog-tagline" id="approval-tagline">MiMo wants to run a tool that may modify your workspace.</p>
+        <div class="approval-card">
+          <div class="approval-card-header">
+            <span class="approval-tool" id="approval-tool">tool</span>
+            <span class="approval-id" id="approval-id"></span>
+          </div>
+          <pre class="approval-input" id="approval-input"></pre>
+        </div>
+        <menu class="dialog-actions">
+          <button id="approval-deny" class="btn btn-ghost" type="button" value="deny">Deny</button>
+          <button id="approval-once" class="btn btn-secondary" type="button" value="approve">Approve once</button>
+          <button id="approval-always" class="btn btn-primary" type="button" value="always">Always approve</button>
+        </menu>
+      </form>
+    </dialog>
+
+    <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

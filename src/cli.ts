@@ -242,6 +242,68 @@ sessionCmd
     console.log(chalk.green(`Session imported as ${session.id}`));
   });
 
+program
+  .command('webui')
+  .description('Start the MiMo Code Web UI in your browser')
+  .option('-C, --cwd <path>', 'workspace directory', process.cwd())
+  .option('-p, --port <number>', 'TCP port (use 0 to pick a free port)', '4280')
+  .option('--host <host>', 'bind host', '127.0.0.1')
+  .option('--no-open', 'do not open the browser automatically')
+  .option('--model <model>', `model (${SUPPORTED_MODELS.join(', ')})`)
+  .option('--base-url <url>', 'MiMo base URL')
+  .option('--token-plan-region <region>', 'Token Plan region: cn, sgp, ams')
+  .option('--max-tokens <number>', `max output tokens (default ${DEFAULT_MAX_TOKENS})`)
+  .option('--temperature <number>', `sampling temperature (default ${DEFAULT_TEMPERATURE})`)
+  .option('--mode <mode>', 'interaction mode: plan, agent, or yolo (default agent)')
+  .option('--sandbox <level>', 'sandbox level: read-only, workspace-write, or danger-full-access')
+  .option('--dry-run', 'show writes and commands without changing files', false)
+  .option('-y, --yes', 'auto-approve tool calls where possible', false)
+  .option('--max-iterations <number>', 'maximum agent/tool loop iterations (default 12)')
+  .action(async (options) => {
+    try {
+      const { launchWebUI } = await import('./webui/index.js');
+      const cwd = options.cwd ?? process.cwd();
+      const port = parsePositiveOrZeroInteger(options.port ?? '4280', '--port');
+      const mode = parseMode(options.mode);
+      const sandbox = parseSandbox(options.sandbox);
+      const server = await launchWebUI({
+        cwd,
+        host: options.host,
+        port,
+        noBrowser: options.open === false,
+        mode,
+        sandbox,
+        dryRun: Boolean(options.dryRun),
+        autoApprove: mode === 'yolo' || Boolean(options.yes),
+        maxIterations: options.maxIterations
+          ? parsePositiveInteger(options.maxIterations, '--max-iterations')
+          : 12,
+        model: options.model,
+        baseUrl: options.baseUrl,
+        tokenPlanRegion: options.tokenPlanRegion,
+        maxTokens: options.maxTokens
+          ? parsePositiveInteger(options.maxTokens, '--max-tokens')
+          : undefined,
+        temperature: options.temperature !== undefined
+          ? parseNonNegativeNumber(options.temperature, '--temperature')
+          : undefined,
+      });
+      console.log(chalk.bold('MiMo Code Web UI'));
+      console.log(chalk.gray(`workspace=${cwd}`));
+      console.log(`Listening on ${chalk.cyan(server.url)}`);
+      console.log(chalk.gray('Press Ctrl+C to stop.'));
+      const shutdown = async (): Promise<void> => {
+        try { await server.close(); } catch { /* ignore */ }
+        process.exit(0);
+      };
+      process.once('SIGINT', () => { void shutdown(); });
+      process.once('SIGTERM', () => { void shutdown(); });
+    } catch (error) {
+      console.error(chalk.red(errorMessage(error)));
+      process.exitCode = 1;
+    }
+  });
+
 async function runTask(task: string, options: CliOptions): Promise<void> {
   try {
     const cwd = options.cwd ?? process.cwd();
@@ -338,6 +400,14 @@ function parsePositiveInteger(value: string, name: string): number {
   const parsed = Number.parseInt(value, 10);
   if (!Number.isInteger(parsed) || parsed <= 0) {
     throw new Error(`${name} must be a positive integer`);
+  }
+  return parsed;
+}
+
+function parsePositiveOrZeroInteger(value: string, name: string): number {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    throw new Error(`${name} must be a non-negative integer`);
   }
   return parsed;
 }
