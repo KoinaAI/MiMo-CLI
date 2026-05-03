@@ -56,9 +56,23 @@ describe('cost estimation', () => {
 
 describe('context usage display', () => {
   it('shows progress bar', () => {
-    const result = formatContextUsage({ inputTokens: 20000, outputTokens: 5000 }, 128000);
+    const result = formatContextUsage(20000, 128000);
     expect(result).toContain('[');
     expect(result).toContain(']');
     expect(result).toContain('%');
   });
+
+  it('clamps percentages above 100 instead of throwing', () => {
+    expect(() => formatContextUsage(200_000, 128_000)).not.toThrow();
+    const result = formatContextUsage(200_000, 128_000);
+    expect(result).toContain('[');
+    expect(result).toContain(']');
+  });
+
+  it('handles non-finite or negative input without throwing', () => {
+    expect(() => formatContextUsage(-1, 128_000)).not.toThrow();
+    expect(() => formatContextUsage(Number.NaN, 128_000)).not.toThrow();
+    expect(() => formatContextUsage(0, 0)).not.toThrow();
+  });
 });
+

@@ -120,4 +120,13 @@ describe('expandMentions', () => {
     expect(result.prompt).toContain('[truncated]');
     expect(result.prompt.length).toBeLessThan(huge.length + 200);
   });
+
+  it('treats file content with $& and $1 as literal text, not regex backrefs', async () => {
+    const tricky = 'price = $&\nfirst capture: $1\ndollar: $$';
+    const result = await expandMentions('see @tricky.txt', async () => tricky);
+    expect(result.attached).toEqual(['tricky.txt']);
+    expect(result.prompt).toContain('price = $&');
+    expect(result.prompt).toContain('first capture: $1');
+    expect(result.prompt).toContain('dollar: $$');
+  });
 });

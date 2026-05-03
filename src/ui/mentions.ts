@@ -158,7 +158,10 @@ export async function expandMentions(prompt: string, readFile: (rel: string) => 
   }
   let next = prompt;
   for (const { match, replacement } of replacements) {
-    next = next.replace(match, replacement);
+    const idx = next.indexOf(match);
+    if (idx >= 0) {
+      next = `${next.slice(0, idx)}${replacement}${next.slice(idx + match.length)}`;
+    }
   }
   return { prompt: next, attached, missing };
 }

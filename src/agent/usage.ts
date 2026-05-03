@@ -54,8 +54,9 @@ export function formatContextUsage(inputTokens: number, maxContext: number): str
 }
 
 function progressBar(percent: number, width: number): string {
-  const filled = Math.round((percent / 100) * width);
-  const empty = width - filled;
+  const clamped = Math.max(0, Math.min(100, Number.isFinite(percent) ? percent : 0));
+  const filled = Math.max(0, Math.min(width, Math.round((clamped / 100) * width)));
+  const empty = Math.max(0, width - filled);
   return `[${'█'.repeat(filled)}${'░'.repeat(empty)}]`;
 }
 

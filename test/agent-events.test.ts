@@ -12,6 +12,34 @@ const config: RuntimeConfig = {
 };
 
 describe('CodingAgent events', () => {
+  it('forwards MCP server context to the model with real newlines', async () => {
+    const originalFetch = globalThis.fetch;
+    let capturedBody: string | undefined;
+    globalThis.fetch = async (_url, init) => {
+      capturedBody = typeof init?.body === 'string' ? init.body : undefined;
+      return new Response(JSON.stringify({ content: [{ type: 'text', text: 'done' }] }), { status: 200 });
+    };
+    const agent = new CodingAgent(
+      {
+        ...config,
+        mcpServers: [{ name: 'demo', command: 'node', args: ['-v'] }],
+      },
+      [],
+      { cwd: process.cwd(), dryRun: false, autoApprove: true, maxIterations: 1 },
+    );
+    await agent.run('hello', {});
+    expect(capturedBody).toBeDefined();
+    const body = JSON.parse(capturedBody as string) as Record<string, unknown>;
+    expect(typeof body.system).toBe('string');
+    const system = body.system as string;
+    expect(system).toContain('Configured MCP servers:');
+    expect(system).toContain('"demo"');
+    // The header and JSON payload must be on separate lines, not joined by a literal "\n".
+    expect(system).not.toContain('Configured MCP servers:\\n');
+    expect(system).toMatch(/Configured MCP servers:\n\[/);
+    globalThis.fetch = originalFetch;
+  });
+
   it('emits errors when API calls fail', async () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = async () => new Response(JSON.stringify({ error: { message: 'boom' } }), { status: 500 });
