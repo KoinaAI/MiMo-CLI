@@ -3,20 +3,34 @@ import { formatUsage, formatCost } from '../agent/usage.js';
 import type { CostEstimate, InteractionMode, RuntimeConfig, SessionRecord, ToolDefinition, TokenUsage } from '../types.js';
 
 /**
- * The splash banner shown when the TUI launches. Aimed at a Codex/Claude-Code
- * feel: a tight boxed mark, the product name, and a single tagline. The
- * branding tagline `Intelligent Coding Agent` is asserted by tests.
+ * Splash banner shown when the TUI launches.
+ *
+ * Visual: a small cyan ANSI-Shadow wordmark, a short tagline, and three
+ * onboarding hints. We keep this minimalist (Codex / Claude-Code feel) and
+ * only use two colours (cyan + dim) so it sits well on any terminal theme.
+ *
+ * The strings `Welcome to MiMo Code` and `/settings for config` are asserted
+ * by tests in `test/theme.test.ts` and `test/tui-smoke.test.tsx`; the
+ * `Intelligent Coding Agent` tagline is part of the product wording.
  */
+const SPLASH_LOGO = [
+  '  ███╗   ███╗ ██╗ ███╗   ███╗  ██████╗ ',
+  '  ████╗ ████║ ██║ ████╗ ████║ ██╔═══██╗',
+  '  ██╔████╔██║ ██║ ██╔████╔██║ ██║   ██║',
+  '  ██║╚██╔╝██║ ██║ ██║╚██╔╝██║ ██║   ██║',
+  '  ██║ ╚═╝ ██║ ██║ ██║ ╚═╝ ██║ ╚██████╔╝',
+  '  ╚═╝     ╚═╝ ╚═╝ ╚═╝     ╚═╝  ╚═════╝ ',
+];
+
 export const SPLASH = [
-  `${chalk.cyan('Welcome to MiMo Code')} ${chalk.dim('v0.1.0')}`,
-  chalk.dim('……………………………………………………………………………………'),
-  '                                                          ',
-  `      ${chalk.cyan('█████████')}                         ${chalk.dim('░░░░░░')}`,
-  `      ${chalk.cyan('██▄███▄██')}                       ${chalk.dim('░░░░░░░░░░')}`,
-  `      ${chalk.cyan('█████████')}                       ${chalk.dim('░░░░░░░░░░')}`,
-  '                                                          ',
-  `${chalk.dim('…………………………………………')} ${chalk.cyan('█ █   █ █')} ${chalk.dim('……………………')}`,
-  `${chalk.dim('/help for commands')} ${chalk.dim('·')} ${chalk.dim('/settings for config')} ${chalk.dim('·')} ${chalk.dim('Shift+Tab switches mode')}`,
+  '',
+  ...SPLASH_LOGO.map((line) => chalk.cyan(line)),
+  '',
+  `  ${chalk.bold('Welcome to MiMo Code')} ${chalk.dim('· Intelligent Coding Agent · v0.1.0')}`,
+  '',
+  `  ${chalk.dim('/help')} ${chalk.dim('for commands')} ${chalk.dim('·')} ${chalk.dim('/settings')} ${chalk.dim('for config')} ${chalk.dim('·')} ${chalk.dim('Shift+Tab')} ${chalk.dim('switches mode')}`,
+  `  ${chalk.dim('@')} ${chalk.dim('to mention files')} ${chalk.dim('·')} ${chalk.dim('/')} ${chalk.dim('to run a command')} ${chalk.dim('·')} ${chalk.dim('/keys')} ${chalk.dim('for shortcuts')}`,
+  '',
 ].join('\n');
 
 export const MODE_LABELS: Record<InteractionMode, string> = {
@@ -24,6 +38,8 @@ export const MODE_LABELS: Record<InteractionMode, string> = {
   agent: chalk.green('AGENT'),
   yolo: chalk.red('YOLO'),
 };
+
+const SEP = chalk.dim(' · ');
 
 export function statusLine(
   config: RuntimeConfig,
@@ -49,7 +65,7 @@ export function statusLine(
   if (costStr) parts.push(chalk.green(costStr));
   parts.push(chalk.gray(shortenPath(cwd)));
   parts.push(chalk.gray(formatUsage(usage)));
-  return parts.join(chalk.gray(' · '));
+  return parts.join(SEP);
 }
 
 export function formatThinkingBlock(text: string): string {
@@ -150,16 +166,39 @@ export function formatWorkflowSummary(summary: WorkflowSummary): string {
   ].join('\n');
 }
 
-/** Restrained sigils for transcript line prefixes. Avoids emoji clutter. */
+/**
+ * Restrained sigils used as left-hand prefixes for transcript entries.
+ *
+ * The transcript groups every entry under one of these markers. We keep the
+ * vocabulary tight so the conversation reads as a continuous stream rather
+ * than a bag of unrelated icons:
+ *
+ *   ▎ user / assistant — bold accent bar (green / cyan)
+ *   ✢ thinking         — soft mark for reasoning blocks
+ *   ·  tool call       — single dim dot, almost invisible chrome
+ *   ↳ tool result      — connector that visually attaches to the call above
+ *   ± diff             — magenta plus/minus to evoke a patch
+ *   ✖ error            — red cross for failures
+ *   •  system          — neutral dim dot
+ */
 export const SIGILS = {
   user: chalk.green('▎'),
   assistant: chalk.cyan('▎'),
-  thinking: chalk.gray('▎'),
-  tool: chalk.yellow('⏵'),
-  toolResult: chalk.gray('↪'),
+  thinking: chalk.gray('✢'),
+  tool: chalk.gray('·'),
+  toolResult: chalk.gray('↳'),
   system: chalk.gray('•'),
   error: chalk.red('✖'),
   diff: chalk.magenta('±'),
+};
+
+/** Headline label shown to the right of a sigil for each transcript kind. */
+export const ROLE_LABELS = {
+  user: 'you',
+  assistant: 'mimo',
+  thinking: 'thinking',
+  system: 'system',
+  error: 'error',
 };
 
 export function shortenPath(cwd: string): string {
@@ -171,7 +210,10 @@ export function shortenPath(cwd: string): string {
 }
 
 /**
- * Compact top-bar summary used by the TUI's persistent status row.
+ * Compact top-bar summary used by the TUI's persistent status row. Renders
+ * a single dim line of the form
+ *
+ *   ✦ MiMo  ◆ AGENT  · model · ~/repo · ⎇ branch · context …
  */
 export function topStatusLine(
   config: RuntimeConfig,
@@ -180,13 +222,39 @@ export function topStatusLine(
   branch: string | undefined,
   contextSummary: string,
 ): string {
-  const parts = [
-    chalk.bold.cyan('MiMo'),
-    MODE_LABELS[mode],
+  const brand = `${chalk.cyan('✦')} ${chalk.bold.cyan('MiMo')}`;
+  const parts: string[] = [
+    brand,
+    modeIndicator(mode),
     chalk.yellow(config.model),
     chalk.gray(shortenPath(cwd)),
   ];
   if (branch) parts.push(chalk.magenta(`⎇ ${branch}`));
   if (contextSummary) parts.push(chalk.gray(contextSummary));
-  return parts.join(chalk.dim(' · '));
+  return parts.join(SEP);
+}
+
+/**
+ * Subtle horizontal rule used to separate user turns in the transcript.
+ *
+ * The rule is sized to a sensible default that fits inside the inner
+ * padding of the TUI's `<Box paddingX={1}>` container without dominating
+ * the screen. Rendered in dim gray so it stays in the background.
+ */
+export function turnDivider(width = 56): string {
+  return chalk.dim('─'.repeat(width));
+}
+
+/** Border colour to use for the input frame in each interaction mode. */
+export function modeBorderColor(mode: InteractionMode): 'cyan' | 'blue' | 'red' {
+  if (mode === 'plan') return 'blue';
+  if (mode === 'yolo') return 'red';
+  return 'cyan';
+}
+
+/** Glyph shown as the input prompt prefix for each interaction mode. */
+export function modePromptGlyph(mode: InteractionMode): string {
+  if (mode === 'plan') return '◇';
+  if (mode === 'yolo') return '▲';
+  return '✦';
 }

@@ -12,7 +12,8 @@ export type TranscriptKind =
   | 'thinking'
   | 'diff'
   | 'error'
-  | 'splash';
+  | 'splash'
+  | 'divider';
 
 export interface TranscriptMessage {
   id: string | number;
@@ -39,8 +40,12 @@ interface MessageProps {
  * Single transcript entry. Each entry is presented as a header line with a
  * sigil + title, followed by the body. We deliberately avoid trailing
  * `<Newline />` blocks so messages don't double-space when stacked.
+ *
+ * The component is wrapped in `React.memo` (see export below) and rendered
+ * inside Ink's `<Static>` so committed entries never re-render after they
+ * land — that's what gives the transcript its "Codex-smooth" feel.
  */
-export function TranscriptEntry({ message }: MessageProps): React.ReactElement {
+function TranscriptEntryImpl({ message }: MessageProps): React.ReactElement {
   if (message.kind === 'splash') {
     return (
       <Box flexDirection="column" marginBottom={0}>
@@ -48,14 +53,25 @@ export function TranscriptEntry({ message }: MessageProps): React.ReactElement {
       </Box>
     );
   }
+
+  if (message.kind === 'divider') {
+    return (
+      <Box marginY={0}>
+        <Text dimColor>{message.body}</Text>
+      </Box>
+    );
+  }
+
   const { sigil, color } = decoration(message.kind);
   const ts = message.timestamp ? ` ${message.timestamp}` : '';
   const duration = message.durationMs !== undefined ? ` · ${formatDurationShort(message.durationMs)}` : '';
   const idxLabel = message.index !== undefined ? ` #${message.index}` : '';
+  const isToolish = message.kind === 'tool_call' || message.kind === 'tool_result';
+  const headerBold = !isToolish && message.kind !== 'thinking';
   return (
-    <Box flexDirection="column" marginBottom={message.kind === 'tool_result' || message.kind === 'tool_call' ? 0 : 1}>
+    <Box flexDirection="column" marginBottom={isToolish ? 0 : 1}>
       <Text>
-        <Text color={color} bold={message.kind !== 'tool_call' && message.kind !== 'tool_result'}>{sigil} {message.title}</Text>
+        <Text color={color} bold={headerBold}>{sigil} {message.title}</Text>
         <Text dimColor>{message.summary ? ` ${message.summary}` : ''}{idxLabel}{ts}{duration}{message.merge === 'append' ? ' · appendable' : ''}</Text>
       </Text>
       {!message.collapsed && message.body ? <MessageBody message={message} /> : null}
@@ -65,6 +81,17 @@ export function TranscriptEntry({ message }: MessageProps): React.ReactElement {
     </Box>
   );
 }
+
+export const TranscriptEntry = React.memo(TranscriptEntryImpl, (prev, next) => {
+  // Once a transcript entry is appended, only an explicit replacement (new
+  // id) should re-render it. Comparing by id keeps the comparison cheap and
+  // makes the memo predictable when we render through Ink's <Static>.
+  return prev.message.id === next.message.id
+    && prev.message.collapsed === next.message.collapsed
+    && prev.message.body === next.message.body
+    && prev.message.summary === next.message.summary
+    && prev.message.title === next.message.title;
+});
 
 function MessageBody({ message }: { message: TranscriptMessage }): React.ReactElement {
   if (message.kind === 'tool_result' && isLikelyDiff(message.body)) {
@@ -90,9 +117,11 @@ export function decoration(kind: TranscriptKind): { sigil: string; color: 'gray'
     case 'thinking':
       return { sigil: '✢', color: 'gray' };
     case 'tool_call':
-      return { sigil: '›', color: 'gray' };
-    case 'tool_result':
+      // Tool calls are background chrome — a single dim dot keeps them
+      // visually grouped with the result that follows immediately below.
       return { sigil: '·', color: 'gray' };
+    case 'tool_result':
+      return { sigil: '↳', color: 'gray' };
     case 'diff':
       return { sigil: '±', color: 'magenta' };
     case 'error':

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Box, render, Text, useApp, useInput, useStdin } from 'ink';
+import { Box, render, Static, Text, useApp, useInput, useStdin } from 'ink';
 import Spinner from 'ink-spinner';
 import SelectInput from 'ink-select-input';
 import { MimoTextInput } from './text-input.js';
@@ -51,7 +51,7 @@ import {
   SLASH_COMMAND_HELP,
 } from './commands.js';
 import { summarizeToolInput, summarizeToolInputCompact, summarizeToolOutput, summarizeToolOutputCompact, formatTimestamp, formatDuration } from './format.js';
-import { SPLASH, modeIndicator, shortenPath, verbForTool, formatWorkflowSummary, topStatusLine } from './theme.js';
+import { SPLASH, modeIndicator, shortenPath, verbForTool, formatWorkflowSummary, topStatusLine, modeBorderColor, modePromptGlyph, turnDivider } from './theme.js';
 
 interface PendingApproval {
   toolCall: ToolCall;
@@ -86,7 +86,13 @@ interface TuiAppProps {
 type ConfigWizard = Awaited<ReturnType<typeof createConfigWizardState>>;
 
 export async function runTui(config: RuntimeConfig, tools: ToolDefinition[], options: AgentOptions): Promise<void> {
-  const instance = render(<TuiApp config={config} tools={tools} options={options} />, { patchConsole: false });
+  // exitOnCtrlC=false hands Ctrl+C to our useInput handler so we can do
+  // codex-style double-tap-to-quit instead of slamming the user back to
+  // bash on a single tap.
+  const instance = render(
+    <TuiApp config={config} tools={tools} options={options} />,
+    { patchConsole: false, exitOnCtrlC: false },
+  );
   await instance.waitUntilExit();
 }
 
@@ -118,7 +124,6 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
   const [streamingText, setStreamingText] = useState('');
   const [streamingThinking, setStreamingThinking] = useState('');
   const [activeTool, setActiveTool] = useState<{ name: string; startedAt: number } | undefined>();
-  const [now, setNow] = useState<number>(() => Date.now());
   const [inputHistory, setInputHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [inputKey, setInputKey] = useState(0);
@@ -142,6 +147,9 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
   const runStartRef = useRef('');
   const toolStartTimes = useRef<Map<string, number>>(new Map());
   const indexCounter = useRef(0);
+  // Tracks whether the transcript already contains real (non-splash) content,
+  // so we know when to insert a turn-divider before a fresh user prompt.
+  const messagesHasContentRef = useRef(false);
   const thinkingBufferRef = useRef(new ThinkingBuffer());
   const streamingBufferRef = useRef('');
   const agent = new CodingAgent(runtimeConfig, tools, { ...options, cwd, mode, sandbox });
@@ -183,13 +191,7 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
     };
   }, [cwd]);
 
-  // Tick the wall clock every second so the verb-phase spinner ("Reading… 12s")
-  // stays accurate while a tool is in flight.
-  useEffect(() => {
-    if (!activeTool && !running) return;
-    const id = setInterval(() => setNow(Date.now()), 500);
-    return () => clearInterval(id);
-  }, [activeTool, running]);
+
 
   // Recompute @-mention completions whenever the prompt or caret moves.
   useEffect(() => {
@@ -235,29 +237,48 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
     }));
   }, []);
 
-  // Commit any buffered reasoning content as a single transcript entry. Called
-  // before any non-thinking event lands (assistant message, tool call, error,
-  // done, etc.) so that consecutive `assistant_thinking` deltas always render
-  // as one block instead of fragmented panels.
+  // We coalesce streaming/thinking deltas into a single React state update
+  // per ~32ms frame so the live region only re-renders ~30fps even if the
+  // model emits hundreds of tokens per second. Without this, every token
+  // would trigger Ink to repaint the input + status bars.
+  const streamingThrottleRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scheduleStreamingFlush = useCallback(() => {
+    if (streamingThrottleRef.current) return;
+    streamingThrottleRef.current = setTimeout(() => {
+      streamingThrottleRef.current = null;
+      setStreamingText(streamingBufferRef.current);
+      setStreamingThinking(thinkingBufferRef.current.peek());
+    }, 32);
+  }, []);
+  const cancelStreamingFlush = useCallback(() => {
+    if (streamingThrottleRef.current) {
+      clearTimeout(streamingThrottleRef.current);
+      streamingThrottleRef.current = null;
+    }
+  }, []);
+  useEffect(() => () => cancelStreamingFlush(), [cancelStreamingFlush]);
+
   const flushThinking = useCallback(() => {
     const text = thinkingBufferRef.current.flush();
+    cancelStreamingFlush();
     setStreamingThinking('');
     if (text) {
       append({ kind: 'thinking', title: 'thinking', body: formatReasoning(text) });
     }
-  }, [append]);
+  }, [append, cancelStreamingFlush]);
 
   const flushStreaming = useCallback(() => {
+    cancelStreamingFlush();
     streamingBufferRef.current = '';
     setStreamingText('');
-  }, []);
+  }, [cancelStreamingFlush]);
 
   const handleEvent = useCallback(
     (event: AgentEvent) => {
       if (event.type === 'thinking') return;
       if (event.type === 'assistant_thinking') {
         thinkingBufferRef.current.append(event.content);
-        setStreamingThinking(thinkingBufferRef.current.peek());
+        scheduleStreamingFlush();
         return;
       }
       if (event.type === 'streaming_delta') {
@@ -268,7 +289,7 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
           flushThinking();
         }
         streamingBufferRef.current += event.content;
-        setStreamingText(streamingBufferRef.current);
+        scheduleStreamingFlush();
         return;
       }
       if (event.type === 'assistant_message') {
@@ -382,7 +403,11 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
       if (command.name === 'keys') append({ kind: 'system', title: 'shortcuts', body: KEYBOARD_SHORTCUTS, timestamp: formatTimestamp() });
       if (command.name === 'exit') exitWithSessionId();
       if (command.name === 'clear') {
-        setMessages([{ id: Date.now(), kind: 'splash', title: '', body: SPLASH }]);
+        // Append a fresh splash + reset the divider tracker; we keep the
+        // <Static> log append-only (Codex-style) instead of trying to wipe
+        // scrollback. Users can still scroll back to see prior turns.
+        append({ kind: 'splash', title: '', body: SPLASH });
+        messagesHasContentRef.current = false;
       }
       if (command.name === 'settings' || command.name === 'config') {
         void createConfigWizardState().then((state) => {
@@ -405,7 +430,8 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
       if (command.name === 'new') {
         const title = command.args.join(' ') || 'Untitled session';
         setSession(createSession(title, cwd));
-        setMessages([]);
+        append({ kind: 'splash', title: '', body: SPLASH });
+        messagesHasContentRef.current = false;
         append({ kind: 'system', title: 'session', body: `Started new session: ${title}`, timestamp: formatTimestamp() });
       }
       if (command.name === 'save') {
@@ -674,6 +700,14 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
       runStartRef.current = safeGitRevision(cwd);
       const controller = new AbortController();
       abortRef.current = controller;
+      // A subtle horizontal rule separates this turn from the previous one
+      // so multi-turn transcripts read as discrete conversations rather than
+      // a single wall of text. We only insert it once we have prior content
+      // (anything beyond the splash).
+      if (messagesHasContentRef.current) {
+        append({ kind: 'divider', title: '', body: turnDivider() });
+      }
+      messagesHasContentRef.current = true;
       // Echo the user's literal prompt to the transcript before mention
       // expansion so the visible history matches what they typed.
       append({ kind: 'user', title: 'you', body: task, timestamp: formatTimestamp() });
@@ -793,9 +827,10 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
       switchMode(order[(order.indexOf(mode) + 1) % order.length] ?? 'agent');
       return;
     }
-    // Ctrl+L: clear screen (== /clear).
+    // Ctrl+L: append a fresh splash to mark a clean break (== /clear).
     if (key.ctrl && input === 'l') {
-      setMessages([{ id: Date.now(), kind: 'splash', title: '', body: SPLASH }]);
+      append({ kind: 'splash', title: '', body: SPLASH });
+      messagesHasContentRef.current = false;
       return;
     }
     // Ctrl+U: clear current input.
@@ -883,7 +918,6 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
   const selectedSlash = suggestions[slashIndex % suggestions.length];
   const inputHint = pendingLines.length > 0 ? ` (line ${pendingLines.length + 1})` : '';
   const verb = activeTool ? `${verbForTool(activeTool.name)} ${activeTool.name}…` : mode === 'plan' ? 'Analyzing…' : 'Thinking…';
-  const elapsed = activeTool ? formatDuration(now - activeTool.startedAt) : undefined;
   const inputLines = Math.max(1, prompt.split('\n').length);
   const handlePromptChange = useCallback(
     (value: string) => {
@@ -901,55 +935,74 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
     return () => clearInterval(id);
   }, [cwd]);
 
+  // Frame colour shared by the input border and prompt prefix so the input
+  // visually "belongs" to the active mode.
+  const frameColor = wizard ? 'yellow' : editingTurn ? 'magenta' : modeBorderColor(mode);
+  const inputGlyph = wizard ? '⚙' : editingTurn ? '✎' : modePromptGlyph(mode);
+  const inputLabel = wizard ? wizardPrompt(wizard) : editingTurn ? 'edit' : mode;
+
   return (
     <Box flexDirection="column">
-      <Box paddingX={1}>
-        <Text>{topStatusLine(runtimeConfig, cwd, mode, branch, contextBar)}</Text>
-      </Box>
+      <Static items={messages}>
+        {(message) => (
+          <Box key={message.id} paddingX={1}>
+            <TranscriptEntry message={message} />
+          </Box>
+        )}
+      </Static>
       <Box flexDirection="column" paddingX={1}>
-        {messages.slice(-28).map((message) => (
-          <TranscriptEntry key={message.id} message={message} />
-        ))}
         {streamingThinking ? (
-          <Box flexDirection="column">
-            <Text dimColor>✢ Thinking…</Text>
+          <Box flexDirection="column" marginBottom={1}>
+            <Text>
+              <Text color="gray">✢ </Text>
+              <Text dimColor italic>thinking…</Text>
+            </Text>
             <Text dimColor>{formatReasoning(tailText(streamingThinking, 12))}</Text>
           </Box>
         ) : null}
         {streamingText ? (
-          <Box flexDirection="column">
-            <Text color="cyan" bold>▎ mimo <Text dimColor>· streaming</Text></Text>
+          <Box flexDirection="column" marginBottom={1}>
+            <Text>
+              <Text color="cyan" bold>▎ mimo</Text>
+              <Text dimColor> · streaming</Text>
+            </Text>
             <Text>{renderMarkdown(tailText(streamingText, 18))}</Text>
           </Box>
         ) : null}
         {running && !approval && !streamingText && !streamingThinking ? (
-          <Text color="yellow">
-            <Spinner type="dots" /> {verb}{elapsed ? ` ${elapsed}` : ''}
-          </Text>
+          <RunningIndicator verb={verb} startedAt={activeTool?.startedAt} />
         ) : null}
       </Box>
       {approval ? (
         <Box flexDirection="column" borderStyle="round" borderColor="yellow" paddingX={1}>
-          <Text color="yellow" bold>Approve tool: {approval.tool.name}</Text>
+          <Text>
+            <Text color="yellow" bold>⚠ Approval required</Text>
+            <Text dimColor> · {approval.tool.name}</Text>
+          </Text>
           <Text dimColor>{approval.tool.description}</Text>
-          <Text color="yellow">{summarizeToolInput(approval.toolCall.input, 500)}</Text>
-          <SelectInput
-            items={approvalItems}
-            onSelect={(item) => {
-              if (item.value === 'always') {
-                alwaysApproveRef.current = true;
-                setAlwaysApprove(true);
-              }
-              approval.resolve(item.value);
-              setApproval(undefined);
-            }}
-          />
+          <Box marginTop={1}>
+            <Text color="yellow">{summarizeToolInput(approval.toolCall.input, 500)}</Text>
+          </Box>
+          <Box marginTop={1}>
+            <SelectInput
+              items={approvalItems}
+              onSelect={(item) => {
+                if (item.value === 'always') {
+                  alwaysApproveRef.current = true;
+                  setAlwaysApprove(true);
+                }
+                approval.resolve(item.value);
+                setApproval(undefined);
+              }}
+            />
+          </Box>
         </Box>
       ) : (
         <Box flexDirection="column">
           {modePickerOpen ? (
             <Box borderStyle="round" borderColor="blue" paddingX={1} flexDirection="column">
-              <Text color="blue" bold>Mode</Text>
+              <Text color="blue" bold>◇ Switch mode</Text>
+              <Text dimColor>Plan dry-runs · Agent asks before writes · YOLO auto-approves.</Text>
               <SelectInput
                 items={(['plan', 'agent', 'yolo'] as InteractionMode[]).map((item) => ({ label: `${modeIndicator(item)} · ${describeSandbox(defaultSandboxForMode(item))}`, value: item }))}
                 onSelect={(item) => {
@@ -961,7 +1014,8 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
           ) : null}
           {modelPickerOpen ? (
             <Box borderStyle="round" borderColor="cyan" paddingX={1} flexDirection="column">
-              <Text color="cyan" bold>Model</Text>
+              <Text color="cyan" bold>✦ Switch model</Text>
+              <Text dimColor>Active session only — persist via /settings.</Text>
               <SelectInput
                 items={SUPPORTED_MODELS.map((modelName) => ({ label: `${modelName === runtimeConfig.model ? '› ' : '  '}${modelName}`, value: modelName }))}
                 onSelect={(item) => {
@@ -972,32 +1026,35 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
             </Box>
           ) : null}
           {suggestions.length > 0 ? (
-            <Box flexDirection="column" paddingX={1}>
-              <Text dimColor>Commands</Text>
+            <Box flexDirection="column" paddingX={1} marginTop={1}>
+              <Text dimColor>commands</Text>
               {suggestions.map((suggestion) => {
                 const selected = selectedSlash?.name === suggestion.name;
                 return selected ? (
-                  <Text key={suggestion.name} color="cyan">
-                    › {suggestion.usage.padEnd(22)} <Text dimColor>{suggestion.description}</Text>
+                  <Text key={suggestion.name}>
+                    <Text color="cyan" bold>› {suggestion.usage.padEnd(24)}</Text>
+                    <Text dimColor>{suggestion.description}</Text>
                   </Text>
                 ) : (
                   <Text key={suggestion.name} dimColor>
-                    {'  '}{suggestion.usage.padEnd(22)} <Text dimColor>{suggestion.description}</Text>
+                    {'  '}{suggestion.usage.padEnd(24)}{suggestion.description}
                   </Text>
                 );
               })}
-              <Text dimColor>↑/↓ select · Tab complete · Enter run</Text>
+              <Text dimColor>↑↓ select · Tab complete · Enter run</Text>
             </Box>
           ) : null}
           {mentionResults.length > 0 ? (
-            <Box flexDirection="column" paddingX={1}>
-              <Text dimColor>files matching "{findMentionAt(prompt, cursor)?.query ?? ''}" — Tab to insert · ↑↓ to choose</Text>
+            <Box flexDirection="column" paddingX={1} marginTop={1}>
+              <Text dimColor>files matching "{findMentionAt(prompt, cursor)?.query ?? ''}" · Tab to insert · ↑↓ to choose</Text>
               {mentionResults.map((rel, idx) => {
                 const active = idx === mentionIndex;
-                return (
-                  <Text key={rel} {...(active ? { color: 'cyan' as const } : { dimColor: true })}>
-                    {active ? '› ' : '  '}{rel}
+                return active ? (
+                  <Text key={rel}>
+                    <Text color="cyan" bold>› {rel}</Text>
                   </Text>
+                ) : (
+                  <Text key={rel} dimColor>{'  '}{rel}</Text>
                 );
               })}
             </Box>
@@ -1009,8 +1066,12 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
               ))}
             </Box>
           ) : null}
-          <Box borderStyle="round" borderColor={wizard ? 'yellow' : editingTurn ? 'magenta' : modeBorderColor(mode)} paddingX={1} minHeight={inputLines + 2}>
-            <Text color={wizard ? 'yellow' : editingTurn ? 'magenta' : modeBorderColor(mode)}>{wizard ? wizardPrompt(wizard) : `▎ ${editingTurn ? 'edit' : mode}${inputHint}`} </Text>
+          <Box borderStyle="round" borderColor={frameColor} paddingX={1} minHeight={inputLines + 2}>
+            <Text>
+              <Text color={frameColor} bold>{inputGlyph} </Text>
+              <Text color={frameColor}>{inputLabel}</Text>
+              <Text dimColor>{inputHint} › </Text>
+            </Text>
             <MimoTextInput
               key={inputKey}
               value={prompt}
@@ -1018,7 +1079,7 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
               onSubmit={submit}
               onCursorChange={setCursor}
               cursorOverride={cursorOverride}
-              placeholder="message MiMo · / for commands · @ for files · /keys for shortcuts"
+              placeholder="message MiMo · / for commands · @ for files · ↹ for shortcuts"
             />
           </Box>
           <BottomStatusBar
@@ -1029,6 +1090,8 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
             dryRun={options.dryRun}
             mcpToolCount={mcpToolCount}
             skillCount={enabledConfigSkills + discoveredSkillsCount}
+            mode={mode}
+            contextBar={contextBar}
           />
         </Box>
       )}
@@ -1045,34 +1108,62 @@ interface BottomStatusBarProps {
   dryRun: boolean | undefined;
   mcpToolCount: number;
   skillCount: number;
+  mode: InteractionMode;
+  contextBar: string;
 }
 
 /**
- * Codex-style persistent status row, rendered directly under the input frame.
- * Shows the active mode, model, sandbox, cwd, git branch, context utilization,
- * token totals, and accumulated cost. We deliberately keep this on a single
- * dim line so the transcript above it stays the visual focus.
+ * Persistent two-row status bar rendered directly under the input frame.
+ *
+ * Row 1 carries the brand-led status line (mode, model, cwd, branch,
+ * context utilization) that used to live above the transcript.
+ * Row 2 lists runtime/workflow segments (max tokens, MCP, skills, sandbox
+ * flags) plus the most-used keyboard shortcuts. Both rows stay dim so they
+ * remain subordinate to the transcript above.
+ *
+ * The component is wrapped in `React.memo` so it doesn't re-render when
+ * unrelated parent state (prompt text, slash-popup index, etc.) changes.
  */
-function BottomStatusBar(props: BottomStatusBarProps): React.ReactElement {
-  const { config, cwd, branch, alwaysApprove, dryRun, mcpToolCount, skillCount } = props;
-  const segments = ['anthropic', `max ${config.maxTokens.toLocaleString()}`];
+const BottomStatusBar = React.memo(function BottomStatusBar(props: BottomStatusBarProps): React.ReactElement {
+  const { config, cwd, branch, alwaysApprove, dryRun, mcpToolCount, skillCount, mode, contextBar } = props;
+  const segments: string[] = [`max ${config.maxTokens.toLocaleString()}`];
+  if (mcpToolCount > 0) segments.push(`${mcpToolCount} MCP`);
+  if (skillCount > 0) segments.push(`${skillCount} skills`);
   if (alwaysApprove) segments.push('auto-approve');
   if (dryRun) segments.push('dry-run');
-  if (mcpToolCount > 0) segments.push(`${mcpToolCount} MCP`);
-  if (skillCount > 0) segments.push(`skills ${skillCount}`);
-  segments.push(shortenPath(cwd));
-  if (branch) segments.push(`⎇ ${branch}`);
+  segments.push('enter send');
+  segments.push('shift+tab mode');
+  segments.push('ctrl+c interrupt');
   return (
-    <Box paddingX={1}>
-      <Text dimColor>{segments.join(' · ')} · /info for tokens</Text>
+    <Box flexDirection="column" paddingX={1}>
+      <Text>{topStatusLine(config, cwd, mode, branch, contextBar)}</Text>
+      <Text dimColor>{segments.join(' · ')}</Text>
     </Box>
   );
-}
+});
 
-function modeBorderColor(mode: InteractionMode): 'cyan' | 'blue' | 'red' {
-  if (mode === 'plan') return 'blue';
-  if (mode === 'yolo') return 'red';
-  return 'cyan';
+/**
+ * Live spinner + elapsed-time indicator shown while the agent is running.
+ *
+ * Owns its own clock so the parent `<TuiApp>` doesn't have to call
+ * `setState` every 500ms, which (combined with the `<Static>` transcript)
+ * is what keeps the rest of the screen still while the agent works.
+ */
+function RunningIndicator({ verb, startedAt }: { verb: string; startedAt: number | undefined }): React.ReactElement {
+  const [now, setNow] = useState<number>(() => Date.now());
+  useEffect(() => {
+    if (startedAt === undefined) return;
+    const id = setInterval(() => setNow(Date.now()), 500);
+    return () => clearInterval(id);
+  }, [startedAt]);
+  const elapsed = startedAt !== undefined ? formatDuration(now - startedAt) : undefined;
+  return (
+    <Text>
+      <Text color="cyan"><Spinner type="dots" /></Text>
+      <Text color="cyan"> {verb}</Text>
+      {elapsed ? <Text dimColor> · {elapsed}</Text> : null}
+    </Text>
+  );
 }
 
 function formatTimeline(messages: TranscriptMessage[]): string {
