@@ -27,6 +27,7 @@ export interface TranscriptMessage {
   index?: number | undefined;
   /** Append mode means later user prompts continue the same turn context. */
   merge?: 'append' | undefined;
+  summary?: string | undefined;
 }
 
 interface MessageProps {
@@ -52,14 +53,14 @@ export function TranscriptEntry({ message }: MessageProps): React.ReactElement {
   const duration = message.durationMs !== undefined ? ` · ${formatDurationShort(message.durationMs)}` : '';
   const idxLabel = message.index !== undefined ? ` #${message.index}` : '';
   return (
-    <Box flexDirection="column" marginBottom={message.kind === 'tool_result' ? 0 : 1}>
+    <Box flexDirection="column" marginBottom={message.kind === 'tool_result' || message.kind === 'tool_call' ? 0 : 1}>
       <Text>
         <Text color={color} bold={message.kind !== 'tool_call' && message.kind !== 'tool_result'}>{sigil} {message.title}</Text>
-        <Text dimColor>{idxLabel}{ts}{duration}{message.merge === 'append' ? ' · appendable' : ''}</Text>
+        <Text dimColor>{message.summary ? ` ${message.summary}` : ''}{idxLabel}{ts}{duration}{message.merge === 'append' ? ' · appendable' : ''}</Text>
       </Text>
       {!message.collapsed && message.body ? <MessageBody message={message} /> : null}
       {message.collapsed ? (
-        <Text dimColor>  … collapsed{message.index !== undefined ? ` (use /expand ${message.index})` : ''}</Text>
+        <Text dimColor>  … {message.index !== undefined ? `/expand ${message.index}` : 'collapsed'}</Text>
       ) : null}
     </Box>
   );

@@ -12,6 +12,7 @@ export type SlashCommandName =
   | 'hooks'
   | 'tools'
   | 'status'
+  | 'info'
   | 'clear'
   | 'exit'
   | 'compact'
@@ -67,6 +68,7 @@ export const SLASH_COMMANDS: SlashCommandSpec[] = [
   { name: 'agents', usage: '/agents', description: 'List named subagents from .mimo/agents/*.md' },
   { name: 'sandbox', usage: '/sandbox [read-only|workspace-write|danger-full-access]', description: 'Show or set the sandbox level' },
   { name: 'status', usage: '/status', description: 'Show runtime model/session/status details' },
+  { name: 'info', usage: '/info', description: 'Show model, token, context, tools, workflow, and cost details' },
   { name: 'clear', usage: '/clear', description: 'Clear visible TUI messages' },
   { name: 'exit', usage: '/exit', description: 'Exit TUI' },
   { name: 'compact', usage: '/compact', description: 'Summarize conversation to reduce context usage' },
@@ -90,7 +92,7 @@ export const SLASH_COMMANDS: SlashCommandSpec[] = [
   { name: 'timeline', usage: '/timeline', description: 'Show a compact session activity timeline' },
 ];
 
-export const SLASH_COMMAND_HELP = SLASH_COMMANDS.map((command) => `${command.usage.padEnd(40)} ${command.description}`).join('\n');
+export const SLASH_COMMAND_HELP = SLASH_COMMANDS.map((command) => `${command.usage.padEnd(34)} ${command.description}`).join('\n');
 
 export function parseSlashCommand(input: string): SlashCommand | undefined {
   const trimmed = input.trim();

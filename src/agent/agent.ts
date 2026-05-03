@@ -55,9 +55,20 @@ export class CodingAgent {
     const skillContext = await buildSkillContext(this.config.skills, this.options.cwd, task);
     const projectContexts = await discoverProjectContext(this.options.cwd);
     const projectContextPrompt = buildProjectContextPrompt(projectContexts);
-    emitHookResults(callbacks, await runHooks(this.config.hooks, 'user_prompt', { cwd: this.options.cwd, prompt: task }));
-    const systemPrompt = this.systemPrompt;
+    const userPromptHooks = await runHooks(this.config.hooks, 'user_prompt', { cwd: this.options.cwd, prompt: task });
+    emitHookResults(callbacks, userPromptHooks);
     const activeTools = this.filterToolsForMode();
+    emit(callbacks, {
+      type: 'workflow_status',
+      message: formatWorkflowStatus({
+        projectContexts: projectContexts.length,
+        skillContext,
+        tools: activeTools,
+        hooks: this.config.hooks?.filter((hook) => hook.enabled !== false).length ?? 0,
+        mcpServers: this.config.mcpServers?.filter((server) => server.enabled !== false).length ?? 0,
+      }),
+    });
+    const systemPrompt = this.systemPrompt;
     const messages: ChatMessage[] = [
       { role: 'system', content: systemPrompt },
       ...contextMessages(this.config, skillContext, projectContextPrompt),
@@ -132,6 +143,7 @@ export class CodingAgent {
         const sandboxDecision = isToolAllowed(sandbox, tool, toolCall.input, this.options.cwd);
         if (!sandboxDecision.allowed) {
           const blocked = `Sandbox blocked: ${sandboxDecision.reason}`;
+          emit(callbacks, { type: 'tool_blocked', id: toolCall.id, name: tool.name, reason: blocked });
           emit(callbacks, { type: 'tool_result', id: toolCall.id, name: tool.name, content: blocked });
           messages.push({ role: 'tool', toolCallId: toolCall.id, name: tool.name, content: blocked });
           continue;
@@ -149,6 +161,7 @@ export class CodingAgent {
         emitHookResults(callbacks, preResults);
         if (wasCancelled(beforeResults) || wasCancelled(preResults)) {
           const blockedContent = `Tool call '${tool.name}' blocked by hook (exit code 2).`;
+          emit(callbacks, { type: 'tool_blocked', id: toolCall.id, name: tool.name, reason: blockedContent });
           emit(callbacks, { type: 'tool_result', id: toolCall.id, name: tool.name, content: blockedContent });
           messages.push({ role: 'tool', toolCallId: toolCall.id, name: tool.name, content: blockedContent });
           continue;
@@ -195,6 +208,18 @@ function contextMessages(config: RuntimeConfig, skillContext: string, projectCon
   if (skillContext) context.push(`Loaded skills:\\n${skillContext}`);
   if (context.length === 0) return [];
   return [{ role: 'system', content: context.join('\n\n') }];
+}
+
+function formatWorkflowStatus(input: { projectContexts: number; skillContext: string; tools: ToolDefinition[]; hooks: number; mcpServers: number }): string {
+  const mcpTools = input.tools.filter((tool) => tool.name.startsWith('mcp__')).length;
+  const subagentTools = input.tools.filter((tool) => tool.name === 'sub_agent' || tool.name === 'agent_dispatch').length;
+  return [
+    `${input.tools.length} tools (${mcpTools} MCP, ${subagentTools} subagent)`,
+    `${input.mcpServers} MCP server(s)`,
+    `${input.hooks} hook(s)`,
+    `${input.projectContexts} project context file(s)`,
+    input.skillContext ? 'skills loaded' : 'no matching skills',
+  ].join(' · ');
 }
 
 async function approveToolCall(toolCall: ToolCall, tool: ToolDefinition, callbacks: AgentRunCallbacks, options: AgentOptions): Promise<'approve' | 'deny'> {

@@ -67,4 +67,19 @@ describe('markdown renderer', () => {
     expect(result).toContain('fixed');
     expect(result).not.toContain('| --- |');
   });
+
+  it('renders escaped pipes inside table cells', () => {
+    const md = '| Pattern | Meaning |\n| --- | --- |\n| `a|b` | escaped \\| pipe |';
+    const result = renderMarkdown(md, { width: 60 });
+    expect(result).toContain('a|b');
+    expect(result).toContain('escaped | pipe');
+    expect(result).toContain('└');
+  });
+
+  it('keeps wide tables bounded', () => {
+    const md = '| First | Second | Third |\n| --- | --- | --- |\n| a very long value that should not explode the terminal | another long value | final |';
+    const result = renderMarkdown(md, { width: 48 });
+    expect(result.split('\n').every((line) => line.length < 120)).toBe(true);
+    expect(result).toContain('…');
+  });
 });

@@ -104,7 +104,9 @@ export type AgentEvent =
   | { type: 'streaming_delta'; content: string }
   | { type: 'tool_call'; id: string; name: string; input: Record<string, unknown> }
   | { type: 'tool_result'; id: string; name: string; content: string }
+  | { type: 'tool_blocked'; id: string; name: string; reason: string }
   | { type: 'hook_result'; event: HookEvent; hook: string; code: number | null; output: string; cancelled: boolean }
+  | { type: 'workflow_status'; message: string }
   | { type: 'error'; message: string }
   | { type: 'done'; result: AgentResult };
 

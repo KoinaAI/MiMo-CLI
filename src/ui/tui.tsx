@@ -50,9 +50,8 @@ import {
   slashCommandSuggestions,
   SLASH_COMMAND_HELP,
 } from './commands.js';
-import { summarizeToolInput, summarizeToolOutput, formatTimestamp, formatDuration } from './format.js';
-import { SPLASH, statusLine, modeIndicator, shortenPath, verbForTool, formatWorkflowSummary } from './theme.js';
-// keep statusLine/modeIndicator imports — used by /status and /mode handlers below.
+import { summarizeToolInput, summarizeToolInputCompact, summarizeToolOutput, summarizeToolOutputCompact, formatTimestamp, formatDuration } from './format.js';
+import { SPLASH, modeIndicator, shortenPath, verbForTool, formatWorkflowSummary, topStatusLine } from './theme.js';
 
 interface PendingApproval {
   toolCall: ToolCall;
@@ -69,6 +68,7 @@ const KEYBOARD_SHORTCUTS = [
   'Home / Ctrl+A    Jump to start of line',
   'End  / Ctrl+E    Jump to end of line',
   'Tab              Cycle slash-command completions',
+  'Shift+Tab        Cycle Plan / Agent / YOLO mode',
   'Ctrl+L           Clear the transcript',
   'Ctrl+U           Reset the current input',
   'Ctrl+W           Delete the previous word',
@@ -129,6 +129,8 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
   const [mentionIndex, setMentionIndex] = useState(0);
   const [discoveredSkillsCount, setDiscoveredSkillsCount] = useState(0);
   const [namedSubagentsCount, setNamedSubagentsCount] = useState(0);
+  const [modelPickerOpen, setModelPickerOpen] = useState(false);
+  const [modePickerOpen, setModePickerOpen] = useState(false);
   const alwaysApproveRef = useRef(options.autoApprove);
   const abortRef = useRef<AbortController | null>(null);
   const lastCtrlCRef = useRef(0);
@@ -143,6 +145,7 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
   const enabledMcpServers = runtimeConfig.mcpServers?.filter((server) => server.enabled !== false).length ?? 0;
   const enabledHooks = runtimeConfig.hooks?.filter((hook) => hook.enabled !== false).length ?? 0;
   const enabledConfigSkills = runtimeConfig.skills?.filter((skill) => skill.enabled !== false).length ?? 0;
+  const contextBar = formatContextStats(session.messages);
 
   // Load persistent input history once.
   useEffect(() => {
@@ -260,7 +263,14 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
         flushStreaming();
         toolStartTimes.current.set(event.id, Date.now());
         setActiveTool({ name: event.name, startedAt: Date.now() });
-        append({ kind: 'tool_call', title: `${event.name}`, body: summarizeToolInput(event.input), timestamp: formatTimestamp(), collapsed: true });
+        append({
+          kind: 'tool_call',
+          title: verbForTool(event.name),
+          summary: `${event.name} ${summarizeToolInputCompact(event.input)}`,
+          body: summarizeToolInput(event.input, 500),
+          timestamp: formatTimestamp(),
+          collapsed: true,
+        });
         return;
       }
       if (event.type === 'tool_result') {
@@ -271,7 +281,8 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
         const isDiff = isLikelyDiff(event.content);
         append({
           kind: isDiff ? 'diff' : 'tool_result',
-          title: `${event.name}`,
+          title: event.name,
+          summary: isDiff ? undefined : summarizeToolOutputCompact(event.content, 120).split('\n')[0],
           body: isDiff ? event.content : summarizeToolOutput(event.content),
           collapsed: !isDiff,
           timestamp: formatTimestamp(),
@@ -288,6 +299,14 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
           collapsed: !event.cancelled && !event.output,
           timestamp: formatTimestamp(),
         });
+        return;
+      }
+      if (event.type === 'workflow_status') {
+        append({ kind: 'system', title: 'workflow ready', body: event.message, timestamp: formatTimestamp(), collapsed: true });
+        return;
+      }
+      if (event.type === 'tool_blocked') {
+        append({ kind: 'error', title: `blocked ${event.name}`, body: event.reason, timestamp: formatTimestamp(), collapsed: true });
         return;
       }
       if (event.type === 'error') {
@@ -318,6 +337,21 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
       setApproval({ toolCall, tool, resolve });
     });
   }, [mode]);
+
+  const switchMode = useCallback((target: InteractionMode) => {
+    setMode(target);
+    setSandbox(defaultSandboxForMode(target));
+    if (target === 'yolo') {
+      alwaysApproveRef.current = true;
+      setAlwaysApprove(true);
+    }
+    append({ kind: 'system', title: 'mode', body: `Switched to ${modeIndicator(target)} · sandbox ${describeSandbox(defaultSandboxForMode(target))}`, timestamp: formatTimestamp() });
+  }, [append]);
+
+  const switchModel = useCallback((target: string) => {
+    setRuntimeConfig((current) => ({ ...current, model: target }));
+    append({ kind: 'system', title: 'model', body: `Switched to ${target} for this session.`, timestamp: formatTimestamp() });
+  }, [append]);
 
   const handleSlashCommand = useCallback(
     (value: string): boolean => {
@@ -438,7 +472,7 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
         });
         append({ kind: 'system', title: `tools (${tools.length})`, body: toolLines.join('\n'), timestamp: formatTimestamp() });
       }
-      if (command.name === 'status') append({ kind: 'system', title: 'status', body: statusLine(runtimeConfig, session, tools, usage, options.cwd, mode, sessionCost), timestamp: formatTimestamp() });
+      if (command.name === 'status' || command.name === 'info') append({ kind: 'system', title: command.name, body: formatInfo(runtimeConfig, session, tools, usage, options.cwd, mode, sandbox, sessionCost, contextBar, builtinToolCount, mcpToolCount, enabledMcpServers, enabledHooks, enabledConfigSkills, discoveredSkillsCount, namedSubagentsCount), timestamp: formatTimestamp() });
       if (command.name === 'workflow') append({
         kind: 'system',
         title: 'workflow',
@@ -462,21 +496,17 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
       if (command.name === 'mode') {
         const target = command.args[0];
         if (target === 'plan' || target === 'agent' || target === 'yolo') {
-          setMode(target);
-          setSandbox(defaultSandboxForMode(target));
-          if (target === 'yolo') alwaysApproveRef.current = true;
-          append({ kind: 'system', title: 'mode', body: `Switched to ${modeIndicator(target)}`, timestamp: formatTimestamp() });
+          switchMode(target);
         } else {
-          append({ kind: 'system', title: 'mode', body: `Current: ${modeIndicator(mode)}\nUsage: /mode [plan|agent|yolo]`, timestamp: formatTimestamp() });
+          setModePickerOpen(true);
         }
       }
       if (command.name === 'model') {
         const target = command.args[0];
         if (!target) {
-          append({ kind: 'system', title: 'model', body: `Current: ${runtimeConfig.model}\n${SUPPORTED_MODELS.map((model) => `  ${model === runtimeConfig.model ? '›' : ' '} ${model}`).join('\n')}`, timestamp: formatTimestamp() });
+          setModelPickerOpen(true);
         } else if (SUPPORTED_MODELS.includes(target as (typeof SUPPORTED_MODELS)[number])) {
-          setRuntimeConfig((current) => ({ ...current, model: target }));
-          append({ kind: 'system', title: 'model', body: `Switched to ${target} for this session.`, timestamp: formatTimestamp() });
+          switchModel(target);
         } else {
           append({ kind: 'error', title: 'model', body: `Unsupported model: ${target}\n${SUPPORTED_MODELS.join('\n')}`, timestamp: formatTimestamp() });
         }
@@ -579,7 +609,7 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
 
       return true;
     },
-    [append, builtinToolCount, discoveredSkillsCount, enabledConfigSkills, enabledHooks, enabledMcpServers, exit, mcpToolCount, messages, mode, namedSubagentsCount, options.cwd, runtimeConfig, sandbox, session, sessionCost, tools, usage],
+    [append, builtinToolCount, contextBar, discoveredSkillsCount, enabledConfigSkills, enabledHooks, enabledMcpServers, exit, mcpToolCount, messages, mode, namedSubagentsCount, options.cwd, runtimeConfig, sandbox, session, sessionCost, switchMode, switchModel, tools, usage],
   );
 
   const submit = useCallback(
@@ -595,6 +625,8 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
       const buffered = [...pendingLines, raw].join('\n');
       const task = buffered.trim();
       setPendingLines([]);
+      setModelPickerOpen(false);
+      setModePickerOpen(false);
       if (!task || running) {
         setPrompt('');
         return;
@@ -714,6 +746,11 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
       return;
     }
     if (approval || running) return;
+    if (key.shift && key.tab) {
+      const order: InteractionMode[] = ['plan', 'agent', 'yolo'];
+      switchMode(order[(order.indexOf(mode) + 1) % order.length] ?? 'agent');
+      return;
+    }
     // Ctrl+L: clear screen (== /clear).
     if (key.ctrl && input === 'l') {
       setMessages([{ id: Date.now(), kind: 'splash', title: '', body: SPLASH }]);
@@ -792,11 +829,9 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
       ]
     : [];
   const suggestions = slashCommandSuggestions(prompt);
-  const contextBar = formatContextStats(session.messages);
   const inputHint = pendingLines.length > 0 ? ` (line ${pendingLines.length + 1})` : '';
   const verb = activeTool ? `${verbForTool(activeTool.name)} ${activeTool.name}…` : mode === 'plan' ? 'Analyzing…' : 'Thinking…';
   const elapsed = activeTool ? formatDuration(now - activeTool.startedAt) : undefined;
-  const usageSummary = formatUsage(usage);
   const inputLines = Math.max(1, prompt.split('\n').length);
   const handlePromptChange = useCallback(
     (value: string) => {
@@ -808,11 +843,16 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
     [historyIndex, tabCycle, cursorOverride],
   );
 
-  // Refresh branch indicator when something might have changed (lazy: every input cycle).
-  if (branch === undefined) setBranch(detectBranch(options.cwd));
+  useEffect(() => {
+    const id = setInterval(() => setBranch(detectBranch(options.cwd)), 5_000);
+    return () => clearInterval(id);
+  }, [options.cwd]);
 
   return (
     <Box flexDirection="column">
+      <Box paddingX={1}>
+        <Text>{topStatusLine(runtimeConfig, options.cwd, mode, branch, contextBar)}</Text>
+      </Box>
       <Box flexDirection="column" paddingX={1}>
         {messages.slice(-28).map((message) => (
           <TranscriptEntry key={message.id} message={message} />
@@ -820,13 +860,13 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
         {streamingThinking ? (
           <Box flexDirection="column">
             <Text color="gray" bold>▎ thinking <Text dimColor>· streaming</Text></Text>
-            <Text dimColor>{streamingThinking}</Text>
+            <Text dimColor>{tailText(streamingThinking, 12)}</Text>
           </Box>
         ) : null}
         {streamingText ? (
           <Box flexDirection="column">
             <Text color="cyan" bold>▎ mimo <Text dimColor>· streaming</Text></Text>
-            <Text>{renderMarkdown(streamingText)}</Text>
+            <Text>{renderMarkdown(tailText(streamingText, 18))}</Text>
           </Box>
         ) : null}
         {running && !approval && !streamingText && !streamingThinking ? (
@@ -854,10 +894,35 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
         </Box>
       ) : (
         <Box flexDirection="column">
+          {modePickerOpen ? (
+            <Box borderStyle="round" borderColor="blue" paddingX={1} flexDirection="column">
+              <Text color="blue" bold>Mode</Text>
+              <SelectInput
+                items={(['plan', 'agent', 'yolo'] as InteractionMode[]).map((item) => ({ label: `${modeIndicator(item)} · ${describeSandbox(defaultSandboxForMode(item))}`, value: item }))}
+                onSelect={(item) => {
+                  switchMode(item.value);
+                  setModePickerOpen(false);
+                }}
+              />
+            </Box>
+          ) : null}
+          {modelPickerOpen ? (
+            <Box borderStyle="round" borderColor="cyan" paddingX={1} flexDirection="column">
+              <Text color="cyan" bold>Model</Text>
+              <SelectInput
+                items={SUPPORTED_MODELS.map((modelName) => ({ label: `${modelName === runtimeConfig.model ? '› ' : '  '}${modelName}`, value: modelName }))}
+                onSelect={(item) => {
+                  switchModel(item.value);
+                  setModelPickerOpen(false);
+                }}
+              />
+            </Box>
+          ) : null}
           {suggestions.length > 0 ? (
-            <Box flexDirection="column" paddingX={1}>
+            <Box flexDirection="column" borderStyle="round" borderColor="gray" paddingX={1}>
+              <Text dimColor>commands · Tab cycles · Enter runs</Text>
               {suggestions.map((suggestion) => (
-                <Text key={suggestion.name} dimColor>{suggestion.usage.padEnd(40)} {suggestion.description}</Text>
+                <Text key={suggestion.name} dimColor>{suggestion.usage.padEnd(34)} {suggestion.description}</Text>
               ))}
             </Box>
           ) : null}
@@ -897,8 +962,6 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
             config={runtimeConfig}
             cwd={options.cwd}
             branch={branch}
-            contextBar={contextBar}
-            usageSummary={usageSummary}
             alwaysApprove={alwaysApprove}
             dryRun={options.dryRun}
             mcpToolCount={mcpToolCount}
@@ -915,8 +978,6 @@ interface BottomStatusBarProps {
   config: RuntimeConfig;
   cwd: string;
   branch: string | undefined;
-  contextBar: string;
-  usageSummary: string;
   alwaysApprove: boolean;
   dryRun: boolean | undefined;
   mcpToolCount: number;
@@ -930,19 +991,17 @@ interface BottomStatusBarProps {
  * dim line so the transcript above it stays the visual focus.
  */
 function BottomStatusBar(props: BottomStatusBarProps): React.ReactElement {
-  const { config, cwd, branch, contextBar, usageSummary, alwaysApprove, dryRun, mcpToolCount, skillCount } = props;
-  const segments = [config.model];
+  const { config, cwd, branch, alwaysApprove, dryRun, mcpToolCount, skillCount } = props;
+  const segments = [`${config.format}`, `max ${config.maxTokens.toLocaleString()}`];
   if (alwaysApprove) segments.push('auto-approve');
   if (dryRun) segments.push('dry-run');
   if (mcpToolCount > 0) segments.push(`${mcpToolCount} MCP`);
   if (skillCount > 0) segments.push(`skills ${skillCount}`);
   segments.push(shortenPath(cwd));
   if (branch) segments.push(`⎇ ${branch}`);
-  if (contextBar) segments.push(contextBar);
-  if (usageSummary) segments.push(usageSummary);
   return (
     <Box paddingX={1}>
-      <Text dimColor>{segments.join(' · ')}</Text>
+      <Text dimColor>{segments.join(' · ')} · /info for tokens</Text>
     </Box>
   );
 }
@@ -965,6 +1024,40 @@ function formatTimeline(messages: TranscriptMessage[]): string {
       return `${timestamp}${title}${suffix}`;
     });
   return events.length > 0 ? events.join('\n') : 'No activity yet.';
+}
+
+function formatInfo(
+  config: RuntimeConfig,
+  session: SessionRecord,
+  tools: ToolDefinition[],
+  usage: TokenUsage,
+  cwd: string,
+  mode: InteractionMode,
+  sandbox: SandboxLevel,
+  cost: CostEstimate | undefined,
+  contextSummary: string,
+  builtinTools: number,
+  mcpTools: number,
+  mcpServers: number,
+  hooks: number,
+  configuredSkills: number,
+  discoveredSkills: number,
+  subagents: number,
+): string {
+  return [
+    `${modeIndicator(mode)} · ${config.model} · ${config.format} · max ${config.maxTokens.toLocaleString()}`,
+    `Session ${session.id.slice(0, 8)} · ${session.messages.length} messages · ${shortenPath(cwd)}`,
+    `Sandbox ${describeSandbox(sandbox)}`,
+    `Context ${contextSummary || 'empty'} · Tokens ${formatUsage(usage) || 'none yet'} · Cost ${formatCost(cost) || 'n/a'}`,
+    `Tools ${tools.length} total · ${builtinTools} built-in · ${mcpTools} MCP · ${mcpServers} server(s)`,
+    `Workflow ${configuredSkills + discoveredSkills} skill(s) · ${hooks} hook(s) · ${subagents} named subagent(s)`,
+  ].join('\n');
+}
+
+function tailText(text: string, maxLines: number): string {
+  const lines = text.split('\n');
+  if (lines.length <= maxLines) return text;
+  return [`… ${lines.length - maxLines} earlier line(s)`, ...lines.slice(-maxLines)].join('\n');
 }
 
 function formatList(label: string, lines: string[]): string {

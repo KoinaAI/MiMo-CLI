@@ -3,13 +3,14 @@ import type { AgentEvent } from '../types.js';
 
 export function summarizeToolInput(input: Record<string, unknown>, maxLength = 180): string {
   const entries = Object.entries(input);
+  if (entries.length === 0) return chalk.dim('no input');
   const parts = entries.map(([key, value]) => {
     if (typeof value === 'string') {
-      const truncated = value.length > 60 ? value.slice(0, 57) + '...' : value;
+      const truncated = compactValue(value, 48);
       return `${chalk.dim(key)}=${chalk.white(truncated)}`;
     }
     const json = JSON.stringify(value);
-    const truncated = json.length > 60 ? json.slice(0, 57) + '...' : json;
+    const truncated = compactValue(json, 48);
     return `${chalk.dim(key)}=${truncated}`;
   });
   const text = parts.join(', ');
@@ -34,6 +35,27 @@ export function summarizeToolOutput(output: string, maxLength = 500): string {
   return output;
 }
 
+export function summarizeToolInputCompact(input: Record<string, unknown>, maxLength = 96): string {
+  const entries = Object.entries(input);
+  if (entries.length === 0) return chalk.dim('no input');
+  const preferredKeys = ['path', 'file', 'command', 'cmd', 'query', 'pattern', 'name', 'url'];
+  const ordered = [
+    ...preferredKeys.flatMap((key) => entries.filter(([entryKey]) => entryKey === key)),
+    ...entries.filter(([key]) => !preferredKeys.includes(key)),
+  ].slice(0, 4);
+  const text = ordered.map(([key, value]) => `${key}=${compactValue(formatUnknown(value), 28)}`).join(' ');
+  const suffix = entries.length > ordered.length ? ` +${entries.length - ordered.length}` : '';
+  return compactValue(`${text}${suffix}`, maxLength);
+}
+
+export function summarizeToolOutputCompact(output: string, maxLength = 180): string {
+  if (!output.trim()) return chalk.dim('empty result');
+  const lines = output.split('\n').filter((line) => line.trim() !== '');
+  const head = lines.slice(0, 4).join('\n');
+  const suffix = lines.length > 4 ? `\n${chalk.dim(`… ${lines.length - 4} more line(s), ${output.length.toLocaleString()} chars`)}` : '';
+  return compactValue(`${head}${suffix}`, maxLength);
+}
+
 export function eventLabel(event: AgentEvent): string {
   switch (event.type) {
     case 'thinking':
@@ -48,8 +70,12 @@ export function eventLabel(event: AgentEvent): string {
       return `Tool ${event.name}`;
     case 'tool_result':
       return `Result ${event.name}`;
+    case 'tool_blocked':
+      return `Blocked ${event.name}`;
     case 'hook_result':
       return `Hook ${event.hook}`;
+    case 'workflow_status':
+      return 'Workflow';
     case 'error':
       return 'Error';
     case 'done':
@@ -73,4 +99,15 @@ export function formatDuration(ms: number): string {
  */
 export function formatTimestamp(date: Date = new Date()): string {
   return date.toTimeString().slice(0, 8);
+}
+
+function formatUnknown(value: unknown): string {
+  if (typeof value === 'string') return value.replace(/\s+/g, ' ').trim();
+  return JSON.stringify(value);
+}
+
+function compactValue(value: string | undefined, maxLength: number): string {
+  const text = (value ?? '').replace(/\s+/g, ' ').trim();
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, Math.max(0, maxLength - 3))}...`;
 }
