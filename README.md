@@ -1,24 +1,24 @@
 # MiMo Code CLI
 
-MiMo Code CLI 是一个基于小米 MiMo 模型的终端 Coding Agent。它可以在本地工作区内阅读代码、搜索文本、编辑文件、运行命令，并通过 OpenAI 兼容或 Anthropic 兼容接口调用 MiMo API 完成软件开发任务。
+MiMo Code CLI is a terminal-based Coding Agent powered by Xiaomi's MiMo models. It can read code, search text, edit files, and run commands within your local workspace, calling the MiMo API via an OpenAI-compatible or Anthropic-compatible interface to complete software development tasks.
 
-## 功能特性
+## Features
 
-- 完整 TUI 与非交互式两种使用方式：`mimo-code` / `mimo-code run "任务"`。
-- Claude Code 风格无边框全屏 TUI：开屏、消息流、工具调用、工具结果、底部输入框、状态行、token usage、快捷键提示。
-- 对写文件、编辑文件、运行 shell 等变更类工具提供审批 UI。
-- TUI 内置 `/settings` 配置向导，无需离开终端界面。
-- 支持 `/` 开头的内部命令、Tab 命令补全、可复用会话、MCP stdio tools、Skill 加载和 Hooks。
-- 支持常规按量付费 API Key 与 Token Plan Key。
-- 支持 OpenAI 兼容 `/v1` 与 Anthropic 兼容 `/anthropic` 两种 API 格式。
-- 内置编码工具：列目录、读文件、写文件、精确替换、全文搜索、运行 shell 命令。
-- 多级配置：环境变量、项目 `.mimo-code.json`、用户 `~/.mimo-code/config.json`。
-- 默认限制文件访问在当前工作区内，避免越权读取/写入。
-- 提供 dry-run 模式，便于预览写文件与 shell 命令。
+- Full TUI and non-interactive modes: `mimo-code` / `mimo-code run "task"`.
+- Claude Code–style borderless full-screen TUI: splash screen, message stream, tool calls, tool results, bottom input box, status bar, token usage, and keyboard shortcut hints.
+- Approval UI for write-file, edit-file, and run-shell operations.
+- Built-in `/settings` wizard in the TUI — no need to leave the terminal.
+- Support for `/`-prefixed slash commands, Tab command completion, resumable sessions, MCP stdio tools, Skill loading, and Hooks.
+- Works with both standard pay-as-you-go API Keys and Token Plan Keys.
+- Supports OpenAI-compatible `/v1` and Anthropic-compatible `/anthropic` API formats.
+- Built-in coding tools: list directory, read file, write file, exact replace, full-text search, run shell command.
+- Multi-level configuration: environment variables, project `.mimo-code.json`, user `~/.mimo-code/config.json`.
+- File access is restricted to the current workspace by default to prevent unauthorized reads/writes.
+- Dry-run mode for previewing file writes and shell commands before executing them.
 
-## 安装
+## Installation
 
-### 从源码安装
+### Install from Source
 
 ```bash
 git clone https://github.com/KoinaAI/MiMo-CLI.git
@@ -28,14 +28,14 @@ npm run build
 npm link
 ```
 
-然后即可使用：
+Then use:
 
 ```bash
 mimo-code --help
 mimo --help
 ```
 
-### 本地开发
+### Local Development
 
 ```bash
 npm install
@@ -44,31 +44,31 @@ npm run build
 npm test
 ```
 
-Node.js 版本要求：`>=20.0.0`。
+Node.js requirement: `>=20.0.0`.
 
-## API 与模型
+## API & Models
 
 ### Base URL
 
-常规按量付费 API Key：
+Standard pay-as-you-go API Key:
 
 ```text
 https://api.xiaomimimo.com
 ```
 
-Token Plan Key：
+Token Plan Key:
 
 ```text
 https://token-plan-<region>.xiaomimimo.com
 ```
 
-`region` 可选：
+Available `region` values:
 
-- `cn`：中国
-- `sgp`：新加坡
-- `ams`：欧洲 / Amsterdam
+- `cn` — China
+- `sgp` — Singapore
+- `ams` — Europe / Amsterdam
 
-CLI 可直接生成 Token Plan Base URL：
+The CLI can generate a Token Plan Base URL directly:
 
 ```bash
 mimo-code base-url --region cn
@@ -76,20 +76,20 @@ mimo-code base-url --region sgp
 mimo-code base-url --region ams
 ```
 
-### API 格式
+### API Formats
 
-MiMo Code CLI 支持两种 API 格式：
+MiMo Code CLI supports two API formats:
 
-| 格式 | 端点 |
+| Format | Endpoint |
 | --- | --- |
-| OpenAI 兼容 | `<baseUrl>/v1/chat/completions` |
-| Anthropic 兼容 | `<baseUrl>/anthropic/v1/messages` |
+| OpenAI-compatible | `<baseUrl>/v1/chat/completions` |
+| Anthropic-compatible | `<baseUrl>/anthropic/v1/messages` |
 
-通过 `--format openai` 或 `--format anthropic` 选择，也可以在配置中保存。
+Select with `--format openai` or `--format anthropic`, or save the preference in config.
 
-### 模型
+### Models
 
-支持模型：
+Supported models:
 
 - `mimo-v2.5-pro`
 - `mimo-v2.5`
@@ -97,11 +97,11 @@ MiMo Code CLI 支持两种 API 格式：
 - `mimo-v2-omni`
 - `mimo-v2-flash`
 
-其中 `mimo-v2-omni` 与 `mimo-v2.5` 支持多模态输入能力；当前 CLI 的 Coding Agent 工作流以文本任务与代码工具调用为主。
+`mimo-v2-omni` and `mimo-v2.5` support multimodal input; the CLI's Coding Agent workflow focuses on text tasks and code tool calls.
 
-最大输出 token 会按模型自动限制：
+Maximum output tokens are capped automatically per model:
 
-| 模型 | 最大输出 token |
+| Model | Max Output Tokens |
 | --- | ---: |
 | `mimo-v2.5-pro` | 131072 |
 | `mimo-v2.5` | 131072 |
@@ -109,33 +109,33 @@ MiMo Code CLI 支持两种 API 格式：
 | `mimo-v2-omni` | 131072 |
 | `mimo-v2-flash` | 65536 |
 
-查看模型列表：
+List available models:
 
 ```bash
 mimo-code models
 ```
 
-## 配置
+## Configuration
 
-### 交互式配置
+### Interactive Configuration
 
 ```bash
 mimo-code settings
 ```
 
-也可以在 TUI 中输入：
+Or inside the TUI:
 
 ```text
 /settings
 ```
 
-TUI 配置向导覆盖 API Key、Base URL 类型、Token Plan region、自定义 Base URL、API 格式、模型、最大输出 token、temperature、system prompt、MCP servers、skills 与 hooks。配置会写入用户配置文件：
+The TUI settings wizard covers: API Key, Base URL type, Token Plan region, custom Base URL, API format, model, max output tokens, temperature, system prompt, MCP servers, skills, and hooks. Configuration is written to the user config file:
 
 ```text
 ~/.mimo-code/config.json
 ```
 
-示例：
+Example:
 
 ```json
 {
@@ -173,9 +173,9 @@ TUI 配置向导覆盖 API Key、Base URL 类型、Token Plan region、自定义
 }
 ```
 
-### 环境变量
+### Environment Variables
 
-也可以通过环境变量配置：
+Configuration can also be provided via environment variables:
 
 ```bash
 export MIMO_API_KEY="YOUR_MIMO_API_KEY"
@@ -184,24 +184,24 @@ export MIMO_MODEL="mimo-v2.5-pro"
 export MIMO_API_FORMAT="openai"
 ```
 
-支持的环境变量：
+Supported environment variables:
 
-| 变量 | 说明 |
+| Variable | Description |
 | --- | --- |
-| `MIMO_API_KEY` | MiMo API Key，优先级最高 |
+| `MIMO_API_KEY` | MiMo API Key — highest priority |
 | `MIMO_BASE_URL` | Base URL |
-| `MIMO_MODEL` | 默认模型 |
-| `MIMO_API_FORMAT` | `openai` 或 `anthropic` |
-| `MIMO_MAX_TOKENS` | 最大输出 token 数 |
-| `MIMO_TEMPERATURE` | 温度 |
-| `OPENAI_API_KEY` | 兼容回退 |
-| `OPENAI_BASE_URL` | 兼容回退 |
-| `ANTHROPIC_API_KEY` | 兼容回退 |
-| `ANTHROPIC_BASE_URL` | 兼容回退 |
+| `MIMO_MODEL` | Default model |
+| `MIMO_API_FORMAT` | `openai` or `anthropic` |
+| `MIMO_MAX_TOKENS` | Maximum output token count |
+| `MIMO_TEMPERATURE` | Sampling temperature |
+| `OPENAI_API_KEY` | Compatibility fallback |
+| `OPENAI_BASE_URL` | Compatibility fallback |
+| `ANTHROPIC_API_KEY` | Compatibility fallback |
+| `ANTHROPIC_BASE_URL` | Compatibility fallback |
 
-### 项目级配置
+### Project-level Configuration
 
-在项目根目录创建 `.mimo-code.json` 可以覆盖用户默认配置：
+Create `.mimo-code.json` in the project root to override user defaults:
 
 ```json
 {
@@ -216,98 +216,98 @@ export MIMO_API_FORMAT="openai"
 }
 ```
 
-不要把真实 API Key 提交到项目级配置。推荐每次启动时输入或使用环境变量。
+Do not commit real API Keys to project-level config. Use environment variables or enter them at startup.
 
-### 配置优先级
+### Configuration Priority
 
-从低到高：
+From lowest to highest:
 
-1. 用户配置：`~/.mimo-code/config.json`
-2. 项目配置：`./.mimo-code.json`
-3. 环境变量
-4. CLI 参数
+1. User config: `~/.mimo-code/config.json`
+2. Project config: `./.mimo-code.json`
+3. Environment variables
+4. CLI flags
 
-## 使用方式
+## Usage
 
-### TUI 交互式任务
+### TUI Interactive Mode
 
 ```bash
 mimo-code
 ```
 
-默认进入 Codex / Claude Code 风格的全屏 TUI。界面包含：
+Launches a full-screen Codex / Claude Code–style TUI. The interface includes:
 
-- 顶部状态栏：模型 · 模式 · cwd · git 分支 · 上下文用量。
-- 开屏 splash 与命令提示。
-- 会话区：用户消息、MiMo 回复、思考块、工具调用、工具结果（可折叠），diff 输出自动以 ± 着色渲染。
-- 底部输入框：根据模式自动着色边框（plan = 蓝、agent = 青、yolo = 红），下方显示沙箱级别、模型、auto-approve 等状态。
-- 审批区：写文件、编辑文件、运行 shell 命令前可选择 Approve once / Always approve this session / Deny。
+- **Top status bar** — model · mode · cwd · git branch · context usage.
+- **Splash screen** and command hints.
+- **Session area** — user messages, MiMo replies, thinking blocks, tool calls, tool results (collapsible), with diff output rendered in ± color.
+- **Bottom input box** — border color changes by mode (plan = blue, agent = cyan, yolo = red); status line shows sandbox level, model, and auto-approve state.
+- **Approval area** — approve or deny write-file, edit-file, and run-shell operations with: Approve once / Always approve this session / Deny.
 
-快捷键：
+Keyboard shortcuts:
 
-| 快捷键 | 说明 |
+| Shortcut | Description |
 | --- | --- |
-| Enter | 发送当前任务（行尾 `\` 换行继续输入） |
-| Tab | 循环补全 slash 命令 |
-| ↑ / ↓ | 浏览输入历史（持久化在 `~/.mimo-code/history`） |
-| Ctrl+L | 清空当前消息流 |
-| Ctrl+U | 清空当前输入 |
-| Ctrl+W | 删除前一个单词 |
-| Esc | 取消审批 / 清空续行 / 空闲时退出 |
-| Ctrl+C | 中断当前运行 / 退出 |
+| Enter | Send the current task (append `\` at end of line to continue on next line) |
+| Tab | Cycle through slash command completions |
+| ↑ / ↓ | Browse input history (persisted at `~/.mimo-code/history`) |
+| Ctrl+L | Clear the current message stream |
+| Ctrl+U | Clear the current input |
+| Ctrl+W | Delete the previous word |
+| Esc | Cancel approval / clear continuation / exit when idle |
+| Ctrl+C | Interrupt current run / quit |
 
-Slash commands：
+Slash commands:
 
-| 命令 | 说明 |
+| Command | Description |
 | --- | --- |
-| `/help` | 显示命令帮助 |
-| `/settings` | 在 TUI 内运行 settings 向导 |
-| `/init` | 在当前项目创建 `.mimo-code.json`、`AGENTS.md`、示例 skill 与示例 subagent |
-| `/sessions` | 列出已保存会话 |
-| `/new [title]` | 开始一个新的可复用会话 |
-| `/load <session-id-prefix>` | 加载保存过的会话 |
-| `/resume` | 恢复最近保存的会话 |
-| `/save` | 保存当前会话到 `~/.mimo-code/sessions/` |
-| `/mcp` | 显示当前 MCP server 配置 |
-| `/skill` | 显示配置文件里声明的 skill |
-| `/skills` | 自动发现 `.mimo/skills/*.md` 与 `~/.mimo-code/skills/*.md` |
-| `/agents` | 列出 `.mimo/agents/*.md` 中的命名 subagent |
-| `/sandbox [level]` | 查看或切换沙箱：`read-only` / `workspace-write` / `danger-full-access` |
-| `/hooks` | 显示当前 Hook 配置 |
-| `/tools` | 显示内置工具与 MCP tools |
-| `/expand <#index\|all>` / `/collapse <#index\|all>` | 展开 / 折叠工具结果块 |
-| `/diff` | 显示工作区 git diff |
-| `/doctor` | 运行配置诊断 |
-| `/memory [note]` | 添加或列出持久 memory note |
-| `/undo` | git checkout 撤销当前修改 |
-| `/compact` | 总结历史以降低上下文压力 |
-| `/context` | 显示当前上下文窗口用量 |
-| `/cost` | 显示当前会话累计费用估算 |
-| `/todo` | 显示 agent 任务清单 |
-| `/network [allow\|deny <host>]` | 查看或设置网络白名单/黑名单 |
-| `/export <path>` | 导出当前会话到 JSON |
-| `/workflow` | 总览 MCP、skills、hooks、subagents 与本地工具状态 |
-| `/timeline` | 显示当前会话最近活动时间线 |
-| `/mode [plan\|agent\|yolo]` | 切换交互模式（自动调整沙箱） |
-| `/status` | 显示运行时模型、会话、工具与 token 状态 |
-| `/clear` | 清空当前可见消息 |
-| `/exit` | 退出 TUI |
+| `/help` | Show command help |
+| `/settings` | Run the settings wizard inside the TUI |
+| `/init` | Create `.mimo-code.json`, `AGENTS.md`, and example skill/subagent in the current project |
+| `/sessions` | List saved sessions |
+| `/new [title]` | Start a new resumable session |
+| `/load <session-id-prefix>` | Load a saved session |
+| `/resume` | Resume the most recently saved session |
+| `/save` | Save the current session to `~/.mimo-code/sessions/` |
+| `/mcp` | Show current MCP server configuration |
+| `/skill` | Show skills declared in the config file |
+| `/skills` | Auto-discover skills in `.mimo/skills/*.md` and `~/.mimo-code/skills/*.md` |
+| `/agents` | List named subagents in `.mimo/agents/*.md` |
+| `/sandbox [level]` | View or switch sandbox: `read-only` / `workspace-write` / `danger-full-access` |
+| `/hooks` | Show current Hook configuration |
+| `/tools` | Show built-in tools and MCP tools |
+| `/expand <#index\|all>` / `/collapse <#index\|all>` | Expand / collapse tool result blocks |
+| `/diff` | Show workspace git diff |
+| `/doctor` | Run configuration diagnostics |
+| `/memory [note]` | Add or list persistent memory notes |
+| `/undo` | Undo current changes via git checkout |
+| `/compact` | Summarize history to reduce context pressure |
+| `/context` | Show current context window usage |
+| `/cost` | Show estimated cost for the current session |
+| `/todo` | Show the agent task list |
+| `/network [allow\|deny <host>]` | View or configure network allow/deny list |
+| `/export <path>` | Export the current session to JSON |
+| `/workflow` | Overview of MCP, skills, hooks, subagents, and local tool status |
+| `/timeline` | Show recent activity timeline for the current session |
+| `/mode [plan\|agent\|yolo]` | Switch interaction mode (sandbox adjusts automatically) |
+| `/status` | Show runtime model, session, tools, and token status |
+| `/clear` | Clear visible messages |
+| `/exit` | Exit the TUI |
 
-### 项目结构
+### Project Structure
 
-`/init` 之后建议把以下结构纳入版本控制：
+After running `/init`, the following structure is recommended for version control:
 
 ```
-.mimo-code.json          # 项目级运行时配置
-AGENTS.md                # 给 agent 的项目说明（被自动注入到 system prompt）
+.mimo-code.json          # Project-level runtime config
+AGENTS.md                # Project notes injected into the system prompt
 .mimo/
-  skills/                # `*.md` skill，YAML frontmatter 声明触发关键字
-  agents/                # `*.md` 命名 subagent，YAML frontmatter 声明工具白名单
+  skills/                # *.md skill files with YAML frontmatter declaring trigger keywords
+  agents/                # *.md named subagent files with YAML frontmatter declaring tool allowlists
 ```
 
 #### Skills
 
-在 `.mimo/skills/` 或 `~/.mimo-code/skills/` 中放置 Markdown 文件，例如：
+Place Markdown files in `.mimo/skills/` or `~/.mimo-code/skills/`, for example:
 
 ```markdown
 ---
@@ -320,11 +320,11 @@ always: false
 When the user changes source code, always run the relevant test suite ...
 ```
 
-`triggers` 中任一关键字（大小写不敏感）出现在用户提示里时，该 skill 会被自动注入到当前请求的 system prompt。`always: true` 表示无条件加载。
+If any `triggers` keyword (case-insensitive) appears in the user prompt, the skill is automatically injected into the system prompt for that request. `always: true` loads the skill unconditionally.
 
 #### Named Subagents
 
-在 `.mimo/agents/` 中放置 Markdown 文件，body 即为该 subagent 的 system prompt：
+Place Markdown files in `.mimo/agents/`; the body becomes that subagent's system prompt:
 
 ```markdown
 ---
@@ -337,63 +337,63 @@ max_iterations: 8
 You are a focused research assistant ...
 ```
 
-主 agent 通过 `agent_dispatch` 工具按名字派发任务到 subagent。`/agents` 命令列出所有发现的 subagent。
+The main agent dispatches tasks to subagents by name via the `agent_dispatch` tool. Use `/agents` to list all discovered subagents.
 
 #### Sandbox
 
-CLI 在 agent 工具调用之前会按沙箱级别校验：
+The CLI validates each tool call against the active sandbox level before execution:
 
-| 级别 | 行为 |
+| Level | Behavior |
 | --- | --- |
-| `read-only` | 只允许 `readOnly: true` 的工具（read / search / list 等）。 |
-| `workspace-write`（默认 agent 模式） | 允许写入工作区内文件；阻断绝对路径或 `..` 越界。 |
-| `danger-full-access`（yolo 模式） | 不做沙箱限制，等价于自动批准。 |
+| `read-only` | Only allows tools with `readOnly: true` (read / search / list, etc.). |
+| `workspace-write` (default agent mode) | Allows writes within the workspace; blocks absolute paths or `..` traversal. |
+| `danger-full-access` (yolo mode) | No sandbox restrictions; equivalent to auto-approve everything. |
 
-`/sandbox` 命令运行时切换；`/mode` 也会同步切换默认沙箱。
+Use `/sandbox` to switch levels at runtime; `/mode` also synchronizes the sandbox level.
 
 #### Hooks v2
 
-`hooks` 现在支持以下事件：`session_start`、`user_prompt`、`before_tool`、`pre_tool_use`、`after_tool`、`post_tool_use`、`notification`、`stop`、`agent_done`、`subagent_done`。
+`hooks` supports the following events: `session_start`, `user_prompt`, `before_tool`, `pre_tool_use`, `after_tool`, `post_tool_use`, `notification`, `stop`, `agent_done`, `subagent_done`.
 
-- 所有 hook 都会收到 `MIMO_HOOK_EVENT` 与 `MIMO_HOOK_PAYLOAD` 环境变量，并通过 stdin 收到一份 JSON payload。
-- 工具相关 hook 还会收到 `MIMO_TOOL_NAME`；stop hook 会收到 `MIMO_STOP_REASON`。
-- `pre_tool_use` 退出码为 `2` 时阻断当前工具调用；其它非零退出码视为软警告。
-- `matcher`、`allowTools`、`blockTools` 支持精确匹配工具名或 `prefix*` 通配，例如 `"matcher": "run_*"` 只在 shell/run 类工具上生效。
-- `timeoutMs` 可覆盖单个 hook 超时；`continueOnCancel: true` 可让后续 hook 在阻断后继续执行。
-- `mimo-code hooks run pre_tool_use --payload '{"toolName":"run_shell"}'` 可手动测试 hook 链路。
+- All hooks receive the `MIMO_HOOK_EVENT` and `MIMO_HOOK_PAYLOAD` environment variables, and a JSON payload via stdin.
+- Tool-related hooks also receive `MIMO_TOOL_NAME`; the stop hook receives `MIMO_STOP_REASON`.
+- When `pre_tool_use` exits with code `2`, the tool call is blocked; any other non-zero exit code is treated as a soft warning.
+- `matcher`, `allowTools`, and `blockTools` support exact tool names or `prefix*` wildcards, e.g. `"matcher": "run_*"` applies only to shell/run tools.
+- `timeoutMs` overrides the timeout for a single hook; `continueOnCancel: true` allows subsequent hooks to continue after a block.
+- Test a hook chain manually: `mimo-code hooks run pre_tool_use --payload '{"toolName":"run_shell"}'`.
 
 #### MCP
 
-MCP stdio 服务器在 CLI 启动时一次性 spawn 并保持运行，整个会话内复用同一个进程；`process.exit` / `SIGINT` 时统一关闭。配置示例同上 `mcpServers`。
+MCP stdio servers are spawned once at CLI startup and kept alive for the entire session; they are shut down together on `process.exit` / `SIGINT`. Configuration follows the `mcpServers` format shown above.
 
-可复用会话保存为 JSON 文件，路径为：
+Resumable sessions are saved as JSON files at:
 
 ```text
 ~/.mimo-code/sessions/<session-id>.json
 ```
 
-加载会话后，新任务会带上历史消息继续执行。
+When a session is loaded, new tasks continue with the historical messages.
 
-如果想使用旧的 prompt-based console 模式：
+To use the older prompt-based console mode:
 
 ```bash
 mimo-code --no-tui
 ```
 
-### 非交互式任务
+### Non-interactive Mode
 
 ```bash
-mimo-code run "阅读这个仓库并总结主要模块"
-mimo-code run "为 src/foo.ts 增加单元测试，并运行测试"
+mimo-code run "Read this repository and summarize the main modules"
+mimo-code run "Add unit tests for src/foo.ts and run them"
 ```
 
-### 指定工作区
+### Specify a Working Directory
 
 ```bash
-mimo-code run -C /path/to/project "修复 TypeScript 类型错误"
+mimo-code run -C /path/to/project "Fix TypeScript type errors"
 ```
 
-### 使用 Token Plan
+### Using a Token Plan
 
 ```bash
 MIMO_API_KEY="YOUR_TOKEN_PLAN_KEY" \
@@ -401,55 +401,55 @@ MIMO_API_KEY="YOUR_TOKEN_PLAN_KEY" \
   --token-plan-region sgp \
   --format openai \
   --model mimo-v2.5-pro \
-  "检查项目并运行测试"
+  "Inspect the project and run the tests"
 ```
 
-### 使用 Anthropic 兼容格式
+### Using the Anthropic-compatible Format
 
 ```bash
 mimo-code run \
   --base-url https://api.xiaomimimo.com \
   --format anthropic \
   --model mimo-v2.5 \
-  "解释当前目录的代码结构"
+  "Explain the code structure in the current directory"
 ```
 
-### Dry-run 模式
+### Dry-run Mode
 
-Dry-run 会阻止写文件与 shell 命令真正执行：
+Dry-run prevents file writes and shell commands from actually executing:
 
 ```bash
-mimo-code run --dry-run "重构这个模块并运行测试"
+mimo-code run --dry-run "Refactor this module and run the tests"
 ```
 
-## 内置工具
+## Built-in Tools
 
-Agent 当前可调用以下工具：
+The agent can call the following tools:
 
-| 工具 | 说明 |
+| Tool | Description |
 | --- | --- |
-| `list_files` | 列出工作区内目录内容 |
-| `read_file` | 读取 UTF-8 文本文件 |
-| `write_file` | 写入 UTF-8 文件并自动创建父目录 |
-| `edit_file` | 对文件执行精确文本替换，并输出 patch |
-| `search_text` | 使用 JavaScript 正则在工作区中搜索文本 |
-| `run_shell` | 在工作区内运行 shell 命令 |
+| `list_files` | List directory contents within the workspace |
+| `read_file` | Read a UTF-8 text file |
+| `write_file` | Write a UTF-8 file, creating parent directories automatically |
+| `edit_file` | Perform an exact text replacement in a file and output a patch |
+| `search_text` | Search the workspace with a JavaScript regex |
+| `run_shell` | Run a shell command inside the workspace |
 
-## MCP 与 Skills
+## MCP & Skills
 
-### MCP stdio tools
+### MCP stdio Tools
 
-`mcpServers` 保存 MCP server 的 `name`、`command`、`args`、`env`、`enabled`。启动 TUI 或非交互运行时，MiMo Code 会启动已启用的 stdio MCP server，执行 JSON-RPC `initialize` 与 `tools/list`，并把发现到的工具注册为 Agent 可调用工具，命名格式为：
+`mcpServers` stores each MCP server's `name`, `command`, `args`, `env`, and `enabled` flag. When starting the TUI or running non-interactively, MiMo Code spawns enabled stdio MCP servers, performs JSON-RPC `initialize` and `tools/list`, and registers discovered tools as agent-callable, named:
 
 ```text
 mcp__<server-name>__<tool-name>
 ```
 
-当模型调用 MCP tool 时，CLI 会通过 `tools/call` 把参数转发给对应 server，并把 text content 汇总回传给 Agent。TUI 中 `/mcp` 可查看 MCP 配置，`/tools` 可查看全部内置工具与 MCP tools。
+When the model calls an MCP tool, the CLI forwards the arguments to the server via `tools/call` and returns the text content to the agent. Use `/mcp` in the TUI to see MCP configuration, and `/tools` to see all built-in and MCP tools.
 
 ### Skills
 
-`skills` 保存 skill 的 `name`、`path`、`description`、`enabled`。每轮 Agent 运行前会读取已启用 skill 的 Markdown/文本内容，并作为系统上下文注入：
+`skills` stores each skill's `name`, `path`, `description`, and `enabled` flag. Before each agent run, enabled skills' Markdown content is read and injected as system context:
 
 ```json
 {
@@ -464,35 +464,35 @@ mcp__<server-name>__<tool-name>
 }
 ```
 
-TUI 中 `/skill` 可查看当前 Skill 配置。
+Use `/skill` in the TUI to view the current skill configuration.
 
 ## Hooks
 
-Hooks 用于把 Agent 生命周期事件转发给本地命令。支持事件：
+Hooks forward agent lifecycle events to local commands. Supported events:
 
-| 事件 | 触发时机 |
+| Event | When it fires |
 | --- | --- |
-| `session_start` | TUI 会话启动 |
-| `user_prompt` | 用户发送任务 |
-| `before_tool` | 工具调用前 |
-| `pre_tool_use` | 工具调用前，可用退出码 2 阻断 |
-| `after_tool` | 工具调用后 |
-| `post_tool_use` | 工具调用后兼容事件 |
-| `notification` | 通知类事件 |
-| `stop` | 用户中断或 agent 停止 |
-| `agent_done` | Agent 完成回答 |
-| `subagent_done` | Subagent 完成回答 |
+| `session_start` | TUI session starts |
+| `user_prompt` | User sends a task |
+| `before_tool` | Before a tool call |
+| `pre_tool_use` | Before a tool call; exit code 2 blocks the call |
+| `after_tool` | After a tool call |
+| `post_tool_use` | After a tool call (compatibility alias) |
+| `notification` | Notification-type events |
+| `stop` | User interrupts or agent stops |
+| `agent_done` | Agent finishes a response |
+| `subagent_done` | Subagent finishes a response |
 
-Hook 命令通过 `spawn(command, args)` 执行，工作目录为当前 workspace。环境变量：
+Hook commands are executed via `spawn(command, args)` with the current workspace as the working directory. Environment variables:
 
-| 变量 | 说明 |
+| Variable | Description |
 | --- | --- |
-| `MIMO_HOOK_EVENT` | 当前事件名 |
-| `MIMO_HOOK_PAYLOAD` | JSON payload，包含 cwd、prompt、toolName、toolInput、toolOutput、finalMessage 等字段 |
-| `MIMO_TOOL_NAME` | 工具相关 hook 的工具名 |
-| `MIMO_STOP_REASON` | stop hook 的停止原因 |
+| `MIMO_HOOK_EVENT` | Current event name |
+| `MIMO_HOOK_PAYLOAD` | JSON payload with fields: cwd, prompt, toolName, toolInput, toolOutput, finalMessage, etc. |
+| `MIMO_TOOL_NAME` | Tool name for tool-related hooks |
+| `MIMO_STOP_REASON` | Stop reason for the stop hook |
 
-示例：
+Example:
 
 ```json
 {
@@ -508,32 +508,32 @@ Hook 命令通过 `spawn(command, args)` 执行，工作目录为当前 workspac
 }
 ```
 
-TUI 中 `/hooks` 可查看 Hook 配置。
+Use `/hooks` in the TUI to view Hook configuration.
 
-## 安全边界
+## Security Boundaries
 
-- 文件工具会拒绝访问当前工作区之外的路径。
-- `dry-run` 可用于预览写入与命令执行。
-- 不要把真实 API Key 放入仓库文件或提交历史。
-- Agent 运行 shell 命令前仍依赖模型判断；处理生产仓库时建议先用 `--dry-run` 或人工审查输出。
+- File tools refuse to access paths outside the current workspace.
+- `--dry-run` can be used to preview writes and command execution.
+- Never put real API Keys in repository files or commit history.
+- The agent still relies on model judgment before running shell commands; when working with production repositories, use `--dry-run` first or review the output manually.
 
-## 计费参考
+## Pricing Reference
 
-按量付费 API：
+Pay-as-you-go API:
 
-- 国内版：Pro 系列输入未命中缓存 ¥7.00 / MTok、输出 ¥21.00 / MTok；`mimo-v2.5` 输入未命中缓存 ¥2.80 / MTok、输出 ¥14.00 / MTok；`mimo-v2-flash` 输入未命中缓存 ¥0.70 / MTok、输出 ¥2.10 / MTok。
-- 国际版：Pro 系列输入未命中缓存 $1.00 / MTok、输出 $3.00 / MTok；`mimo-v2.5` 输入未命中缓存 $0.40 / MTok、输出 $2.00 / MTok；`mimo-v2-flash` 输入未命中缓存 $0.10 / MTok、输出 $0.30 / MTok。
-- 缓存写入免费，缓存命中输入价格更低。
-- `mimo-v2-omni` 与 `mimo-v2-flash` 不支持 1M 上下文档位。
+- **China region** — Pro series: input (cache miss) ¥7.00 / MTok, output ¥21.00 / MTok; `mimo-v2.5`: input (cache miss) ¥2.80 / MTok, output ¥14.00 / MTok; `mimo-v2-flash`: input (cache miss) ¥0.70 / MTok, output ¥2.10 / MTok.
+- **International** — Pro series: input (cache miss) $1.00 / MTok, output $3.00 / MTok; `mimo-v2.5`: input (cache miss) $0.40 / MTok, output $2.00 / MTok; `mimo-v2-flash`: input (cache miss) $0.10 / MTok, output $0.30 / MTok.
+- Cache writes are free; cache-hit input price is lower.
+- `mimo-v2-omni` and `mimo-v2-flash` do not support the 1M context tier.
 
-Token Plan：
+Token Plan:
 
-- Pro 模型按输入输出总 token 的 `2x` 消耗。
-- 其他模型按 `1x` 消耗。
+- Pro models consume `2x` the total input + output token count.
+- Other models consume `1x`.
 
-具体价格以 MiMo 控制台为准。
+For authoritative pricing, refer to the MiMo console.
 
-## 开发与自测
+## Development & Testing
 
 ```bash
 npm run lint
@@ -545,26 +545,27 @@ node dist/cli.js models
 node dist/cli.js base-url --region sgp
 ```
 
-TUI smoke test：
+TUI smoke test:
 
 ```bash
 MIMO_API_KEY=dummy node dist/cli.js --help
 MIMO_API_KEY=dummy node dist/cli.js --no-tui
 ```
 
-## 项目结构
+## Project Structure
 
 ```text
 src/
-  agent/      Agent 循环、系统提示词、token usage 汇总
-  api/        OpenAI / Anthropic 兼容 API 客户端
-  cli.ts      命令行入口
-  config/     配置加载、保存、交互式配置、TUI 配置向导
-  hooks.ts    Agent 生命周期 Hook 执行
-  mcp/        stdio MCP JSON-RPC client 与 tool 注册
-  session/    可复用会话存储
-  skills/     Skill 文件加载与上下文注入
-  tools/      文件、搜索、shell 工具
-  ui/         Ink TUI、slash commands、终端输出与格式化
-  utils/      通用工具
+  agent/      Agent loop, system prompt, token usage aggregation
+  api/        OpenAI / Anthropic compatible API clients
+  cli.ts      CLI entry point
+  config/     Config loading, saving, interactive config, TUI settings wizard
+  hooks.ts    Agent lifecycle Hook execution
+  mcp/        stdio MCP JSON-RPC client and tool registration
+  session/    Resumable session storage
+  skills/     Skill file loading and context injection
+  tools/      File, search, and shell tools
+  ui/         Ink TUI, slash commands, terminal output and formatting
+  utils/      General utilities
 ```
+
