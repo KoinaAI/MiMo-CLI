@@ -420,7 +420,7 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
       }
       if (command.name === 'load') void doLoadSession(command.args[0], setSession, append, setCwd);
       if (command.name === 'resume') void doResumeSession(command.args[0], setSession, append, setCwd);
-      if (command.name === 'worktree') handleWorktreeCommand(command.args, append, setCwd, setSession);
+      if (command.name === 'worktree') handleWorktreeCommand(command.args, cwd, append, setCwd, setSession);
       if (command.name === 'mcp') {
         const statuses = new Map(getMcpRegistry().status().map((entry) => [entry.name, entry]));
         append({
@@ -1185,6 +1185,7 @@ function rollbackSessionToLastUser(setSession: React.Dispatch<React.SetStateActi
 
 function handleWorktreeCommand(
   args: string[],
+  cwd: string,
   append: (message: Omit<TranscriptMessage, 'id'>) => void,
   setCwd: React.Dispatch<React.SetStateAction<string>>,
   setSession: React.Dispatch<React.SetStateAction<SessionRecord>>,
@@ -1192,7 +1193,7 @@ function handleWorktreeCommand(
   const [subcommand, ...rest] = args;
   try {
     if (!subcommand || subcommand === 'list') {
-      const output = execFileSync('git', ['worktree', 'list', '--porcelain'], { encoding: 'utf8', timeout: 10_000 });
+      const output = execFileSync('git', ['worktree', 'list', '--porcelain'], { cwd, encoding: 'utf8', timeout: 10_000 });
       append({ kind: 'system', title: 'worktrees', body: formatWorktreeList(output), timestamp: formatTimestamp() });
       return;
     }
@@ -1202,7 +1203,7 @@ function handleWorktreeCommand(
         append({ kind: 'error', title: 'worktree', body: 'Usage: /worktree new <path> <branch>', timestamp: formatTimestamp() });
         return;
       }
-      execFileSync('git', ['worktree', 'add', '-b', branch, worktreePath], { encoding: 'utf8', timeout: 30_000 });
+      execFileSync('git', ['worktree', 'add', '-b', branch, worktreePath], { cwd, encoding: 'utf8', timeout: 30_000 });
       append({ kind: 'system', title: 'worktree created', body: `${worktreePath}\nbranch=${branch}`, timestamp: formatTimestamp() });
       return;
     }
@@ -1212,7 +1213,7 @@ function handleWorktreeCommand(
         append({ kind: 'error', title: 'worktree', body: 'Usage: /worktree open <path>', timestamp: formatTimestamp() });
         return;
       }
-      process.chdir(worktreePath);
+      process.chdir(path.resolve(cwd, worktreePath));
       const nextCwd = process.cwd();
       setCwd(nextCwd);
       setSession(createSession(`Worktree ${path.basename(nextCwd)}`, nextCwd));
@@ -1225,7 +1226,7 @@ function handleWorktreeCommand(
         append({ kind: 'error', title: 'worktree', body: 'Usage: /worktree remove <path>', timestamp: formatTimestamp() });
         return;
       }
-      execFileSync('git', ['worktree', 'remove', worktreePath], { encoding: 'utf8', timeout: 30_000 });
+      execFileSync('git', ['worktree', 'remove', worktreePath], { cwd, encoding: 'utf8', timeout: 30_000 });
       append({ kind: 'system', title: 'worktree removed', body: worktreePath, timestamp: formatTimestamp() });
       return;
     }
