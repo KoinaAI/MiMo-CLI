@@ -2,29 +2,28 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { MiMoClient } from '../src/api/client.js';
 import type { RuntimeConfig, ToolDefinition } from '../src/types.js';
 
-describe('MiMoClient OpenAI mode', () => {
+describe('MiMoClient Anthropic mode', () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
-  it('calls /v1/chat/completions and parses tool calls', async () => {
+  it('calls /anthropic/v1/messages and parses tool calls', async () => {
     const fetchMock = vi.fn(async () =>
       new Response(
         JSON.stringify({
-          choices: [
+          content: [
             {
-              message: {
-                content: 'I will inspect files.',
-                tool_calls: [
-                  {
-                    id: 'call-1',
-                    function: { name: 'list_files', arguments: '{"path":"."}' },
-                  },
-                ],
-              },
+              type: 'text',
+              text: 'I will inspect files.',
+            },
+            {
+              type: 'tool_use',
+              id: 'call-1',
+              name: 'list_files',
+              input: { path: '.' },
             },
           ],
-          usage: { prompt_tokens: 10, completion_tokens: 5 },
+          usage: { input_tokens: 10, output_tokens: 5 },
         }),
         { status: 200, headers: { 'content-type': 'application/json' } },
       ),
@@ -34,7 +33,7 @@ describe('MiMoClient OpenAI mode', () => {
       apiKey: 'key',
       baseUrl: 'https://api.xiaomimimo.com',
       model: 'mimo-v2.5-pro',
-      format: 'openai',
+      format: 'anthropic',
       maxTokens: 4096,
       temperature: 0,
     };
@@ -49,7 +48,7 @@ describe('MiMoClient OpenAI mode', () => {
     const client = new MiMoClient(config);
     const response = await client.complete([{ role: 'user', content: 'hello' }], tools);
     expect(fetchMock).toHaveBeenCalledWith(
-      'https://api.xiaomimimo.com/v1/chat/completions',
+      'https://api.xiaomimimo.com/anthropic/v1/messages',
       expect.objectContaining({ method: 'POST' }),
     );
     expect(response.toolCalls).toEqual([{ id: 'call-1', name: 'list_files', input: { path: '.' } }]);

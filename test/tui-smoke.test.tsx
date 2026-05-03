@@ -10,7 +10,7 @@ describe('Transcript splash rendering', () => {
       <TranscriptEntry message={{ id: 1, kind: 'splash', title: '', body: SPLASH }} />,
     );
     const frame = lastFrame() ?? '';
-    expect(frame).toContain('M I M O');
+    expect(frame).toContain('Welcome to MiMo Code');
     // The `splash` kind must not render the dim "•" sigil that the default
     // case otherwise produces.
     expect(frame).not.toContain('• ');

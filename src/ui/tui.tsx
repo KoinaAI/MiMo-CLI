@@ -3,7 +3,7 @@ import { Box, render, Text, useApp, useInput, useStdin } from 'ink';
 import Spinner from 'ink-spinner';
 import SelectInput from 'ink-select-input';
 import { MimoTextInput } from './text-input.js';
-import { execSync } from 'node:child_process';
+import { execFileSync, execSync } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { findMentionAt, applyMention, suggestMentions, expandMentions } from './mentions.js';
@@ -20,7 +20,7 @@ import { createConfigWizardState, saveWizardConfig, updateWizard, wizardPrompt, 
 import { createSession, listSessions, readSession, saveSession, exportSession } from '../session/store.js';
 import { getTodoStore } from '../tools/todo.js';
 import { getMcpRegistry } from '../mcp/registry.js';
-import { SUPPORTED_MODELS } from '../constants.js';
+import { DEFAULT_BASE_URL, DEFAULT_MODEL, DEFAULT_TEMPERATURE, SUPPORTED_MODELS } from '../constants.js';
 import { formatNetworkPolicy, allowHost, denyHost, resetNetworkPolicy } from '../policy/network.js';
 import { describeSandbox, defaultSandboxForMode } from '../policy/sandbox.js';
 import { renderMarkdown } from './markdown.js';
@@ -73,8 +73,8 @@ const KEYBOARD_SHORTCUTS = [
   'Ctrl+U           Reset the current input',
   'Ctrl+W           Delete the previous word',
   'Ctrl+K           Kill to end of line',
-  'Ctrl+C           Interrupt run · press again to quit',
-  'Esc              Deny pending approval / clear pending lines / quit when idle',
+  'Ctrl+C           Interrupt run · press twice to quit',
+  'Esc              Deny approval · press twice to edit previous turn',
 ].join('\n');
 
 interface TuiAppProps {
@@ -109,6 +109,7 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
   const [usage, setUsage] = useState<TokenUsage>({});
   const [sessionCost, setSessionCost] = useState<CostEstimate | undefined>();
   const [alwaysApprove, setAlwaysApprove] = useState(options.autoApprove);
+  const [cwd, setCwd] = useState(options.cwd);
   const [session, setSession] = useState<SessionRecord>(() => createSession('Untitled session', options.cwd));
   const [wizard, setWizard] = useState<ConfigWizard | undefined>();
   const [runtimeConfig, setRuntimeConfig] = useState<RuntimeConfig>(config);
@@ -131,14 +132,19 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
   const [namedSubagentsCount, setNamedSubagentsCount] = useState(0);
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
   const [modePickerOpen, setModePickerOpen] = useState(false);
+  const [slashIndex, setSlashIndex] = useState(0);
+  const [editingTurn, setEditingTurn] = useState(false);
   const alwaysApproveRef = useRef(options.autoApprove);
   const abortRef = useRef<AbortController | null>(null);
   const lastCtrlCRef = useRef(0);
+  const lastEscRef = useRef(0);
+  const lastUserPromptRef = useRef('');
+  const runStartRef = useRef('');
   const toolStartTimes = useRef<Map<string, number>>(new Map());
   const indexCounter = useRef(0);
   const thinkingBufferRef = useRef(new ThinkingBuffer());
   const streamingBufferRef = useRef('');
-  const agent = new CodingAgent(runtimeConfig, tools, { ...options, mode, sandbox });
+  const agent = new CodingAgent(runtimeConfig, tools, { ...options, cwd, mode, sandbox });
 
   const mcpToolCount = tools.filter((tool) => tool.name.startsWith('mcp__')).length;
   const builtinToolCount = tools.length - mcpToolCount;
@@ -154,11 +160,19 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
     });
   }, []);
 
+  const exitWithSessionId = useCallback(() => {
+    void saveSession(session).catch(() => undefined);
+    try { setRawMode(false); } catch { /* ignore */ }
+    console.log(`\nSession ${session.id}`);
+    console.log(`Resume with: mimo-code --resume ${session.id.slice(0, 8)}`);
+    exit();
+  }, [exit, session, setRawMode]);
+
   useEffect(() => {
     let cancelled = false;
     void Promise.all([
-      discoverSkills(options.cwd).catch(() => []),
-      discoverNamedSubagents(options.cwd).catch(() => []),
+      discoverSkills(cwd).catch(() => []),
+      discoverNamedSubagents(cwd).catch(() => []),
     ]).then(([skills, agents]) => {
       if (cancelled) return;
       setDiscoveredSkillsCount(skills.length);
@@ -167,7 +181,7 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
     return () => {
       cancelled = true;
     };
-  }, [options.cwd]);
+  }, [cwd]);
 
   // Tick the wall clock every second so the verb-phase spinner ("Reading… 12s")
   // stays accurate while a tool is in flight.
@@ -189,7 +203,7 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
       return;
     }
     let cancelled = false;
-    void suggestMentions(options.cwd, ctx.query).then((results) => {
+    void suggestMentions(cwd, ctx.query).then((results) => {
       if (cancelled) return;
       setMentionResults(results);
       setMentionIndex(0);
@@ -197,7 +211,7 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
     return () => {
       cancelled = true;
     };
-  }, [prompt, cursor, options.cwd, mentionResults.length]);
+  }, [prompt, cursor, cwd, mentionResults.length]);
 
   const append = useCallback((message: Omit<TranscriptMessage, 'id'>) => {
     setMessages((prev) => {
@@ -206,6 +220,12 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
       return [...prev, next].slice(-200);
     });
   }, []);
+
+  useEffect(() => {
+    const resumeId = options.resumeSessionId;
+    if (!resumeId) return;
+    void doLoadSession(resumeId, setSession, append, setCwd);
+  }, [append, options.resumeSessionId]);
 
   const addSessionMessages = useCallback((newMessages: ChatMessage[]) => {
     setSession((current) => ({
@@ -223,7 +243,7 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
     const text = thinkingBufferRef.current.flush();
     setStreamingThinking('');
     if (text) {
-      append({ kind: 'thinking', title: 'thinking', body: text, collapsed: true });
+      append({ kind: 'thinking', title: 'thinking', body: formatReasoning(text) });
     }
   }, [append]);
 
@@ -360,20 +380,23 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
 
       if (command.name === 'help') append({ kind: 'system', title: 'help', body: SLASH_COMMAND_HELP, timestamp: formatTimestamp() });
       if (command.name === 'keys') append({ kind: 'system', title: 'shortcuts', body: KEYBOARD_SHORTCUTS, timestamp: formatTimestamp() });
-      if (command.name === 'exit') exit();
+      if (command.name === 'exit') exitWithSessionId();
       if (command.name === 'clear') {
         setMessages([{ id: Date.now(), kind: 'splash', title: '', body: SPLASH }]);
       }
       if (command.name === 'settings' || command.name === 'config') {
-        void createConfigWizardState().then(setWizard).catch((error: unknown) => append({ kind: 'error', title: 'settings', body: errorMessage(error) }));
+        void createConfigWizardState().then((state) => {
+          setWizard(state);
+          append({ kind: 'system', title: 'settings', body: formatSettingsMenu(state), timestamp: formatTimestamp() });
+        }).catch((error: unknown) => append({ kind: 'error', title: 'settings', body: errorMessage(error) }));
       }
       if (command.name === 'init') {
-        void initProject(options.cwd, { model: runtimeConfig.model, baseUrl: runtimeConfig.baseUrl })
+        void initProject(cwd, { model: runtimeConfig.model, baseUrl: runtimeConfig.baseUrl })
           .then((result) => {
             const lines = [
-              `Initialized project at ${options.cwd}`,
-              ...result.created.map((file) => `  + ${path.relative(options.cwd, file) || file}`),
-              ...(result.alreadyExisted.length > 0 ? ['', 'Already present (left untouched):', ...result.alreadyExisted.map((file) => `  · ${path.relative(options.cwd, file) || file}`)] : []),
+              `Initialized project at ${cwd}`,
+              ...result.created.map((file) => `  + ${path.relative(cwd, file) || file}`),
+              ...(result.alreadyExisted.length > 0 ? ['', 'Already present (left untouched):', ...result.alreadyExisted.map((file) => `  · ${path.relative(cwd, file) || file}`)] : []),
             ];
             append({ kind: 'system', title: 'init', body: lines.join('\n'), timestamp: formatTimestamp() });
           })
@@ -381,7 +404,7 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
       }
       if (command.name === 'new') {
         const title = command.args.join(' ') || 'Untitled session';
-        setSession(createSession(title, options.cwd));
+        setSession(createSession(title, cwd));
         setMessages([]);
         append({ kind: 'system', title: 'session', body: `Started new session: ${title}`, timestamp: formatTimestamp() });
       }
@@ -395,8 +418,9 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
           .then((sessions) => append({ kind: 'system', title: 'sessions', body: formatSessions(sessions), timestamp: formatTimestamp() }))
           .catch((error: unknown) => append({ kind: 'error', title: 'sessions', body: errorMessage(error) }));
       }
-      if (command.name === 'load') void doLoadSession(command.args[0], setSession, append);
-      if (command.name === 'resume') void doResumeSession(setSession, append);
+      if (command.name === 'load') void doLoadSession(command.args[0], setSession, append, setCwd);
+      if (command.name === 'resume') void doResumeSession(command.args[0], setSession, append, setCwd);
+      if (command.name === 'worktree') handleWorktreeCommand(command.args, append, setCwd, setSession);
       if (command.name === 'mcp') {
         const statuses = new Map(getMcpRegistry().status().map((entry) => [entry.name, entry]));
         append({
@@ -423,7 +447,7 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
         timestamp: formatTimestamp(),
       });
       if (command.name === 'skills') {
-        void discoverSkills(options.cwd)
+        void discoverSkills(cwd)
           .then((skills) => {
             if (skills.length === 0) {
               append({ kind: 'system', title: 'skills', body: 'No skill files found in .mimo/skills or ~/.mimo-code/skills.\nRun /init to scaffold a sample skill.', timestamp: formatTimestamp() });
@@ -437,7 +461,7 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
           .catch((error: unknown) => append({ kind: 'error', title: 'skills', body: errorMessage(error) }));
       }
       if (command.name === 'agents') {
-        void discoverNamedSubagents(options.cwd)
+        void discoverNamedSubagents(cwd)
           .then((agents) => {
             if (agents.length === 0) {
               append({ kind: 'system', title: 'agents', body: 'No named subagents found in .mimo/agents/. Run /init to scaffold one.', timestamp: formatTimestamp() });
@@ -472,7 +496,7 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
         });
         append({ kind: 'system', title: `tools (${tools.length})`, body: toolLines.join('\n'), timestamp: formatTimestamp() });
       }
-      if (command.name === 'status' || command.name === 'info') append({ kind: 'system', title: command.name, body: formatInfo(runtimeConfig, session, tools, usage, options.cwd, mode, sandbox, sessionCost, contextBar, builtinToolCount, mcpToolCount, enabledMcpServers, enabledHooks, enabledConfigSkills, discoveredSkillsCount, namedSubagentsCount), timestamp: formatTimestamp() });
+      if (command.name === 'status' || command.name === 'info') append({ kind: 'system', title: command.name, body: formatInfo(runtimeConfig, session, tools, usage, cwd, mode, sandbox, sessionCost, contextBar, builtinToolCount, mcpToolCount, enabledMcpServers, enabledHooks, enabledConfigSkills, discoveredSkillsCount, namedSubagentsCount), timestamp: formatTimestamp() });
       if (command.name === 'workflow') append({
         kind: 'system',
         title: 'workflow',
@@ -520,25 +544,25 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
       }
       if (command.name === 'diff') {
         try {
-          const diff = execSync('git diff --stat --patch', { cwd: options.cwd, encoding: 'utf8', timeout: 10_000 });
+          const diff = execSync('git diff --stat --patch', { cwd, encoding: 'utf8', timeout: 10_000 });
           append({ kind: 'diff', title: 'workspace diff', body: diff || 'No changes detected', timestamp: formatTimestamp() });
         } catch {
           append({ kind: 'error', title: 'diff', body: 'Not a git repository or git not available', timestamp: formatTimestamp() });
         }
       }
       if (command.name === 'doctor') {
-        void runDiagnostics(runtimeConfig, options.cwd)
+        void runDiagnostics(runtimeConfig, cwd)
           .then((results) => append({ kind: 'system', title: 'diagnostics', body: formatDiagnostics(results), timestamp: formatTimestamp() }))
           .catch((error: unknown) => append({ kind: 'error', title: 'doctor', body: errorMessage(error) }));
       }
       if (command.name === 'memory') {
         const note = command.args.join(' ');
         if (note) {
-          void addMemoryNote(note, options.cwd)
+          void addMemoryNote(note, cwd)
             .then((mem) => append({ kind: 'system', title: 'memory', body: `Saved note ${mem.id}: ${note}`, timestamp: formatTimestamp() }))
             .catch((error: unknown) => append({ kind: 'error', title: 'memory', body: errorMessage(error) }));
         } else {
-          void listMemoryNotes(options.cwd)
+          void listMemoryNotes(cwd)
             .then((notes) => {
               if (notes.length === 0) append({ kind: 'system', title: 'memory', body: 'No memory notes. Usage: /memory <note text>', timestamp: formatTimestamp() });
               else append({ kind: 'system', title: 'memory', body: notes.map((n) => `${n.id} [${n.scope}] ${n.content}`).join('\n'), timestamp: formatTimestamp() });
@@ -548,8 +572,9 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
       }
       if (command.name === 'undo') {
         try {
-          const result = execSync('git checkout -- .', { cwd: options.cwd, encoding: 'utf8', timeout: 10_000 });
-          append({ kind: 'system', title: 'undo', body: result || 'Reverted all unstaged changes', timestamp: formatTimestamp() });
+          const revision = safeGitRevision(cwd);
+          rollbackWorkspace(cwd, revision, append);
+          append({ kind: 'system', title: 'undo', body: 'Reverted unstaged changes to HEAD', timestamp: formatTimestamp() });
         } catch {
           append({ kind: 'error', title: 'undo', body: 'Failed to revert. Not a git repository or no changes to undo.', timestamp: formatTimestamp() });
         }
@@ -609,7 +634,7 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
 
       return true;
     },
-    [append, builtinToolCount, contextBar, discoveredSkillsCount, enabledConfigSkills, enabledHooks, enabledMcpServers, exit, mcpToolCount, messages, mode, namedSubagentsCount, options.cwd, runtimeConfig, sandbox, session, sessionCost, switchMode, switchModel, tools, usage],
+    [append, builtinToolCount, contextBar, discoveredSkillsCount, enabledConfigSkills, enabledHooks, enabledMcpServers, exitWithSessionId, mcpToolCount, messages, mode, namedSubagentsCount, cwd, runtimeConfig, sandbox, session, sessionCost, switchMode, switchModel, tools, usage],
   );
 
   const submit = useCallback(
@@ -624,6 +649,7 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
       }
       const buffered = [...pendingLines, raw].join('\n');
       const task = buffered.trim();
+      setEditingTurn(false);
       setPendingLines([]);
       setModelPickerOpen(false);
       setModePickerOpen(false);
@@ -633,6 +659,7 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
       }
       setPrompt('');
       if (task && !task.startsWith('/')) {
+        lastUserPromptRef.current = task;
         setInputHistory((prev) => (prev[prev.length - 1] === task ? prev : [...prev, task]));
         void appendInputHistory(task);
         setHistoryIndex(-1);
@@ -644,6 +671,7 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
       if (handleSlashCommand(task)) return;
       setRunning(true);
       setStreamingText('');
+      runStartRef.current = safeGitRevision(cwd);
       const controller = new AbortController();
       abortRef.current = controller;
       // Echo the user's literal prompt to the transcript before mention
@@ -652,8 +680,8 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
       void (async () => {
         let promptForModel = task;
         const expansion = await expandMentions(task, async (rel) => {
-          const abs = path.resolve(options.cwd, rel);
-          if (!abs.startsWith(path.resolve(options.cwd))) {
+          const abs = path.resolve(cwd, rel);
+          if (!abs.startsWith(path.resolve(cwd))) {
             throw new Error(`Refusing to read outside workspace: ${rel}`);
           }
           return readFile(abs, 'utf8');
@@ -691,7 +719,7 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
         }
       })();
     },
-    [addSessionMessages, agent, append, approveToolCall, handleEvent, handleSlashCommand, options.cwd, pendingLines, running, session.messages, wizard],
+    [addSessionMessages, agent, append, approveToolCall, handleEvent, handleSlashCommand, cwd, pendingLines, running, session.messages, wizard],
   );
 
   // Replace the prompt programmatically and remount the inner text input so
@@ -704,24 +732,28 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
   }, []);
 
   useInput((input, key) => {
-    // Ctrl+C: interrupt run, else exit.
+    // Ctrl+C: Codex-style double tap before quitting.
     if (key.ctrl && input === 'c') {
+      const nowMs = Date.now();
       if (running) {
-        const nowMs = Date.now();
         if (nowMs - lastCtrlCRef.current < 1500) {
-          try { setRawMode(false); } catch { /* ignore */ }
-          exit();
+          exitWithSessionId();
           return;
         }
         append({ kind: 'system', title: 'interrupted', body: 'Stopping current run. Press Ctrl+C again to quit.', timestamp: formatTimestamp() });
+        abortRef.current?.abort();
         lastCtrlCRef.current = nowMs;
         return;
       }
-      try { setRawMode(false); } catch { /* ignore */ }
-      exit();
+      if (nowMs - lastCtrlCRef.current < 1500) {
+        exitWithSessionId();
+        return;
+      }
+      lastCtrlCRef.current = nowMs;
+      append({ kind: 'system', title: 'exit', body: `Press Ctrl+C again to quit.\nSession ${session.id}\nResume with: mimo-code --resume ${session.id.slice(0, 8)}`, timestamp: formatTimestamp() });
       return;
     }
-    // Esc: cancel approval or interrupt the current run; exit only when idle.
+    // Esc: cancel approval/interrupt; double tap on idle reopens last user turn.
     if (key.escape) {
       if (approval) {
         approval.resolve('deny');
@@ -739,9 +771,19 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
         setPendingLines([]);
         return;
       }
-      if (!running && !prompt) {
-        try { setRawMode(false); } catch { /* ignore */ }
-        exit();
+      if (!running && !prompt && lastUserPromptRef.current) {
+        const nowMs = Date.now();
+        if (nowMs - lastEscRef.current < 1500) {
+          replacePrompt(lastUserPromptRef.current);
+          setEditingTurn(true);
+          rollbackSessionToLastUser(setSession);
+          rollbackWorkspace(cwd, runStartRef.current, append);
+          append({ kind: 'system', title: 'edit previous', body: 'Reopened previous prompt and rolled workspace back to the turn start.', timestamp: formatTimestamp() });
+          lastEscRef.current = 0;
+          return;
+        }
+        lastEscRef.current = nowMs;
+        append({ kind: 'system', title: 'edit previous', body: 'Press Esc again to edit previous message and rollback this turn.', timestamp: formatTimestamp() });
       }
       return;
     }
@@ -783,9 +825,10 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
         }
         return;
       }
-      const completed = completeSlashCommand(prompt, tabCycle);
+      const completed = completeSlashCommand(prompt, slashIndex);
       if (completed) {
         replacePrompt(completed);
+        setSlashIndex((index) => index + 1);
         setTabCycle((cycle) => cycle + 1);
       }
       return;
@@ -797,6 +840,10 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
         setMentionIndex((idx) => (idx - 1 + mentionResults.length) % mentionResults.length);
         return;
       }
+      if (suggestions.length > 0) {
+        setSlashIndex((idx) => (idx - 1 + suggestions.length) % suggestions.length);
+        return;
+      }
       if (inputHistory.length === 0) return;
       const newIndex = historyIndex < 0 ? inputHistory.length - 1 : Math.max(0, historyIndex - 1);
       setHistoryIndex(newIndex);
@@ -806,6 +853,10 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
     if (key.downArrow) {
       if (mentionResults.length > 0) {
         setMentionIndex((idx) => (idx + 1) % mentionResults.length);
+        return;
+      }
+      if (suggestions.length > 0) {
+        setSlashIndex((idx) => (idx + 1) % suggestions.length);
         return;
       }
       if (historyIndex < 0) return;
@@ -829,6 +880,7 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
       ]
     : [];
   const suggestions = slashCommandSuggestions(prompt);
+  const selectedSlash = suggestions[slashIndex % suggestions.length];
   const inputHint = pendingLines.length > 0 ? ` (line ${pendingLines.length + 1})` : '';
   const verb = activeTool ? `${verbForTool(activeTool.name)} ${activeTool.name}…` : mode === 'plan' ? 'Analyzing…' : 'Thinking…';
   const elapsed = activeTool ? formatDuration(now - activeTool.startedAt) : undefined;
@@ -839,19 +891,20 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
       if (cursorOverride !== undefined) setCursorOverride(undefined);
       if (historyIndex !== -1) setHistoryIndex(-1);
       if (tabCycle !== 0) setTabCycle(0);
+      if (slashIndex !== 0) setSlashIndex(0);
     },
-    [historyIndex, tabCycle, cursorOverride],
+    [historyIndex, tabCycle, cursorOverride, slashIndex],
   );
 
   useEffect(() => {
-    const id = setInterval(() => setBranch(detectBranch(options.cwd)), 5_000);
+    const id = setInterval(() => setBranch(detectBranch(cwd)), 5_000);
     return () => clearInterval(id);
-  }, [options.cwd]);
+  }, [cwd]);
 
   return (
     <Box flexDirection="column">
       <Box paddingX={1}>
-        <Text>{topStatusLine(runtimeConfig, options.cwd, mode, branch, contextBar)}</Text>
+        <Text>{topStatusLine(runtimeConfig, cwd, mode, branch, contextBar)}</Text>
       </Box>
       <Box flexDirection="column" paddingX={1}>
         {messages.slice(-28).map((message) => (
@@ -859,8 +912,8 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
         ))}
         {streamingThinking ? (
           <Box flexDirection="column">
-            <Text color="gray" bold>▎ thinking <Text dimColor>· streaming</Text></Text>
-            <Text dimColor>{tailText(streamingThinking, 12)}</Text>
+            <Text dimColor>✢ Thinking…</Text>
+            <Text dimColor>{formatReasoning(tailText(streamingThinking, 12))}</Text>
           </Box>
         ) : null}
         {streamingText ? (
@@ -919,11 +972,21 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
             </Box>
           ) : null}
           {suggestions.length > 0 ? (
-            <Box flexDirection="column" borderStyle="round" borderColor="gray" paddingX={1}>
-              <Text dimColor>commands · Tab cycles · Enter runs</Text>
-              {suggestions.map((suggestion) => (
-                <Text key={suggestion.name} dimColor>{suggestion.usage.padEnd(34)} {suggestion.description}</Text>
-              ))}
+            <Box flexDirection="column" paddingX={1}>
+              <Text dimColor>Commands</Text>
+              {suggestions.map((suggestion) => {
+                const selected = selectedSlash?.name === suggestion.name;
+                return selected ? (
+                  <Text key={suggestion.name} color="cyan">
+                    › {suggestion.usage.padEnd(22)} <Text dimColor>{suggestion.description}</Text>
+                  </Text>
+                ) : (
+                  <Text key={suggestion.name} dimColor>
+                    {'  '}{suggestion.usage.padEnd(22)} <Text dimColor>{suggestion.description}</Text>
+                  </Text>
+                );
+              })}
+              <Text dimColor>↑/↓ select · Tab complete · Enter run</Text>
             </Box>
           ) : null}
           {mentionResults.length > 0 ? (
@@ -946,8 +1009,8 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
               ))}
             </Box>
           ) : null}
-          <Box borderStyle="round" borderColor={wizard ? 'yellow' : modeBorderColor(mode)} paddingX={1} minHeight={inputLines + 2}>
-            <Text color={wizard ? 'yellow' : modeBorderColor(mode)}>{wizard ? wizardPrompt(wizard) : `▎ ${mode}${inputHint}`} </Text>
+          <Box borderStyle="round" borderColor={wizard ? 'yellow' : editingTurn ? 'magenta' : modeBorderColor(mode)} paddingX={1} minHeight={inputLines + 2}>
+            <Text color={wizard ? 'yellow' : editingTurn ? 'magenta' : modeBorderColor(mode)}>{wizard ? wizardPrompt(wizard) : `▎ ${editingTurn ? 'edit' : mode}${inputHint}`} </Text>
             <MimoTextInput
               key={inputKey}
               value={prompt}
@@ -960,7 +1023,7 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
           </Box>
           <BottomStatusBar
             config={runtimeConfig}
-            cwd={options.cwd}
+            cwd={cwd}
             branch={branch}
             alwaysApprove={alwaysApprove}
             dryRun={options.dryRun}
@@ -992,7 +1055,7 @@ interface BottomStatusBarProps {
  */
 function BottomStatusBar(props: BottomStatusBarProps): React.ReactElement {
   const { config, cwd, branch, alwaysApprove, dryRun, mcpToolCount, skillCount } = props;
-  const segments = [`${config.format}`, `max ${config.maxTokens.toLocaleString()}`];
+  const segments = ['anthropic', `max ${config.maxTokens.toLocaleString()}`];
   if (alwaysApprove) segments.push('auto-approve');
   if (dryRun) segments.push('dry-run');
   if (mcpToolCount > 0) segments.push(`${mcpToolCount} MCP`);
@@ -1026,6 +1089,13 @@ function formatTimeline(messages: TranscriptMessage[]): string {
   return events.length > 0 ? events.join('\n') : 'No activity yet.';
 }
 
+function formatReasoning(text: string): string {
+  return text
+    .split('\n')
+    .map((line) => `  ${line ? `│ ${line}` : '│'}`)
+    .join('\n');
+}
+
 function formatInfo(
   config: RuntimeConfig,
   session: SessionRecord,
@@ -1045,7 +1115,7 @@ function formatInfo(
   subagents: number,
 ): string {
   return [
-    `${modeIndicator(mode)} · ${config.model} · ${config.format} · max ${config.maxTokens.toLocaleString()}`,
+    `${modeIndicator(mode)} · ${config.model} · anthropic · max ${config.maxTokens.toLocaleString()}`,
     `Session ${session.id.slice(0, 8)} · ${session.messages.length} messages · ${shortenPath(cwd)}`,
     `Sandbox ${describeSandbox(sandbox)}`,
     `Context ${contextSummary || 'empty'} · Tokens ${formatUsage(usage) || 'none yet'} · Cost ${formatCost(cost) || 'n/a'}`,
@@ -1082,6 +1152,124 @@ function detectBranch(cwd: string): string | undefined {
   }
 }
 
+function safeGitRevision(cwd: string): string {
+  try {
+    return execFileSync('git', ['rev-parse', 'HEAD'], { cwd, encoding: 'utf8', timeout: 1500 }).trim();
+  } catch {
+    return '';
+  }
+}
+
+function rollbackWorkspace(
+  cwd: string,
+  revision: string,
+  append: (message: Omit<TranscriptMessage, 'id'>) => void,
+): void {
+  if (!revision) return;
+  try {
+    const diff = execFileSync('git', ['diff', '--binary', revision], { cwd, encoding: 'utf8', timeout: 10_000 });
+    if (!diff.trim()) return;
+    execFileSync('git', ['apply', '-R', '--whitespace=nowarn'], { cwd, input: diff, encoding: 'utf8', timeout: 10_000 });
+  } catch (error) {
+    append({ kind: 'error', title: 'rollback', body: `Workspace rollback failed: ${errorMessage(error)}`, timestamp: formatTimestamp() });
+  }
+}
+
+function rollbackSessionToLastUser(setSession: React.Dispatch<React.SetStateAction<SessionRecord>>): void {
+  setSession((current) => {
+    const lastUserIndex = current.messages.map((message) => message.role).lastIndexOf('user');
+    if (lastUserIndex === -1) return current;
+    return { ...current, messages: current.messages.slice(0, lastUserIndex), updatedAt: new Date().toISOString() };
+  });
+}
+
+function handleWorktreeCommand(
+  args: string[],
+  append: (message: Omit<TranscriptMessage, 'id'>) => void,
+  setCwd: React.Dispatch<React.SetStateAction<string>>,
+  setSession: React.Dispatch<React.SetStateAction<SessionRecord>>,
+): void {
+  const [subcommand, ...rest] = args;
+  try {
+    if (!subcommand || subcommand === 'list') {
+      const output = execFileSync('git', ['worktree', 'list', '--porcelain'], { encoding: 'utf8', timeout: 10_000 });
+      append({ kind: 'system', title: 'worktrees', body: formatWorktreeList(output), timestamp: formatTimestamp() });
+      return;
+    }
+    if (subcommand === 'new') {
+      const [worktreePath, branch] = rest;
+      if (!worktreePath || !branch) {
+        append({ kind: 'error', title: 'worktree', body: 'Usage: /worktree new <path> <branch>', timestamp: formatTimestamp() });
+        return;
+      }
+      execFileSync('git', ['worktree', 'add', '-b', branch, worktreePath], { encoding: 'utf8', timeout: 30_000 });
+      append({ kind: 'system', title: 'worktree created', body: `${worktreePath}\nbranch=${branch}`, timestamp: formatTimestamp() });
+      return;
+    }
+    if (subcommand === 'open') {
+      const [worktreePath] = rest;
+      if (!worktreePath) {
+        append({ kind: 'error', title: 'worktree', body: 'Usage: /worktree open <path>', timestamp: formatTimestamp() });
+        return;
+      }
+      process.chdir(worktreePath);
+      const nextCwd = process.cwd();
+      setCwd(nextCwd);
+      setSession(createSession(`Worktree ${path.basename(nextCwd)}`, nextCwd));
+      append({ kind: 'system', title: 'worktree opened', body: `Changed workspace to ${nextCwd}.`, timestamp: formatTimestamp() });
+      return;
+    }
+    if (subcommand === 'remove') {
+      const [worktreePath] = rest;
+      if (!worktreePath) {
+        append({ kind: 'error', title: 'worktree', body: 'Usage: /worktree remove <path>', timestamp: formatTimestamp() });
+        return;
+      }
+      execFileSync('git', ['worktree', 'remove', worktreePath], { encoding: 'utf8', timeout: 30_000 });
+      append({ kind: 'system', title: 'worktree removed', body: worktreePath, timestamp: formatTimestamp() });
+      return;
+    }
+    append({ kind: 'error', title: 'worktree', body: 'Usage: /worktree [list|new|open|remove]', timestamp: formatTimestamp() });
+  } catch (error) {
+    append({ kind: 'error', title: 'worktree', body: errorMessage(error), timestamp: formatTimestamp() });
+  }
+}
+
+function formatWorktreeList(output: string): string {
+  if (!output.trim()) return 'No git worktrees found.';
+  const rows = output
+    .trim()
+    .split(/\n\n/u)
+    .map((block) => {
+      const lines = block.split('\n');
+      const worktree = lines.find((line) => line.startsWith('worktree '))?.slice('worktree '.length) ?? '(unknown)';
+      const branch = lines.find((line) => line.startsWith('branch '))?.slice('branch '.length).replace('refs/heads/', '') ?? 'detached';
+      const head = lines.find((line) => line.startsWith('HEAD '))?.slice('HEAD '.length, 'HEAD '.length + 8) ?? '';
+      return `${branch.padEnd(24)} ${head}  ${worktree}`;
+    });
+  return ['branch                   head      path', ...rows].join('\n');
+}
+
+function formatSettingsMenu(state: ConfigWizard): string {
+  const lines = [
+    'Settings',
+    'Choose a row, edit the value, then type save from Review.',
+    '',
+    `› Provider URL      ${state.draft.baseUrl ?? DEFAULT_BASE_URL}`,
+    '  Wire format       Anthropic (/anthropic/v1/messages)',
+    `  Model             ${state.draft.model ?? DEFAULT_MODEL}`,
+    `  Max tokens        ${state.draft.maxTokens ?? 'auto'}`,
+    `  Temperature       ${state.draft.temperature ?? DEFAULT_TEMPERATURE}`,
+    `  Instructions      ${state.draft.systemPrompt ? 'custom' : 'default'}`,
+    `  MCP servers       ${state.draft.mcpServers?.length ?? 0}`,
+    `  Skills            ${state.draft.skills?.length ?? 0}`,
+    `  Hooks             ${state.draft.hooks?.length ?? 0}`,
+    '',
+    'Esc cancel · back previous · save persist',
+  ];
+  return lines.join('\n');
+}
+
 async function handleWizardInput(
   task: string,
   wizard: ConfigWizard,
@@ -1103,6 +1291,7 @@ async function doLoadSession(
   prefix: string | undefined,
   setSession: React.Dispatch<React.SetStateAction<SessionRecord>>,
   append: (message: Omit<TranscriptMessage, 'id'>) => void,
+  setCwd?: React.Dispatch<React.SetStateAction<string>>,
 ): Promise<void> {
   if (!prefix) {
     append({ kind: 'error', title: 'load session', body: 'Usage: /load <session-id-prefix>', timestamp: formatTimestamp() });
@@ -1116,14 +1305,21 @@ async function doLoadSession(
   }
   const loaded = await readSession(match.id);
   setSession(loaded);
-  append({ kind: 'system', title: 'session loaded', body: `${loaded.title}\n${loaded.id}\nmessages=${loaded.messages.length}`, timestamp: formatTimestamp() });
+  setCwd?.(loaded.cwd);
+  append({ kind: 'system', title: 'session loaded', body: `${loaded.title}\n${loaded.id}\ncwd=${loaded.cwd}\nmessages=${loaded.messages.length}`, timestamp: formatTimestamp() });
 }
 
 async function doResumeSession(
+  prefix: string | undefined,
   setSession: React.Dispatch<React.SetStateAction<SessionRecord>>,
   append: (message: Omit<TranscriptMessage, 'id'>) => void,
+  setCwd?: React.Dispatch<React.SetStateAction<string>>,
 ): Promise<void> {
   try {
+    if (prefix) {
+      await doLoadSession(prefix, setSession, append, setCwd);
+      return;
+    }
     const sessions = await listSessions();
     if (sessions.length === 0) {
       append({ kind: 'system', title: 'resume', body: 'No saved sessions to resume.', timestamp: formatTimestamp() });
@@ -1132,7 +1328,8 @@ async function doResumeSession(
     const latest = sessions[0];
     if (!latest) return;
     setSession(latest);
-    append({ kind: 'system', title: 'resumed', body: `${latest.title}\n${latest.id}\nmessages=${latest.messages.length}`, timestamp: formatTimestamp() });
+    setCwd?.(latest.cwd);
+    append({ kind: 'system', title: 'resumed', body: `${latest.title}\n${latest.id}\ncwd=${latest.cwd}\nmessages=${latest.messages.length}`, timestamp: formatTimestamp() });
   } catch (error) {
     append({ kind: 'error', title: 'resume', body: errorMessage(error), timestamp: formatTimestamp() });
   }

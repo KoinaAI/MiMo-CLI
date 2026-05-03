@@ -88,7 +88,7 @@ export function decoration(kind: TranscriptKind): { sigil: string; color: 'gray'
     case 'assistant':
       return { sigil: '▎', color: 'cyan' };
     case 'thinking':
-      return { sigil: '▎', color: 'gray' };
+      return { sigil: '✢', color: 'gray' };
     case 'tool_call':
       return { sigil: '›', color: 'gray' };
     case 'tool_result':

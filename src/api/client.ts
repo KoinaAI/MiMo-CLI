@@ -1,7 +1,7 @@
 import type { AssistantResponse, ChatMessage, RuntimeConfig, ToolCall, ToolDefinition, TokenUsage } from '../types.js';
 import { MiMoCliError } from '../utils/errors.js';
 import { isRecord } from '../utils/json.js';
-import { toAnthropicTools, toOpenAITools } from './tools.js';
+import { toAnthropicTools } from './tools.js';
 
 export interface StreamCallbacks {
   onDelta?(text: string): void;
@@ -12,165 +12,11 @@ export class MiMoClient {
   constructor(private readonly config: RuntimeConfig) {}
 
   async complete(messages: ChatMessage[], tools: ToolDefinition[]): Promise<AssistantResponse> {
-    if (this.config.format === 'anthropic') {
-      return this.completeAnthropic(messages, tools);
-    }
-    return this.completeOpenAI(messages, tools);
+    return this.completeAnthropic(messages, tools);
   }
 
   async completeStreaming(messages: ChatMessage[], tools: ToolDefinition[], callbacks: StreamCallbacks = {}): Promise<AssistantResponse> {
-    if (this.config.format === 'anthropic') {
-      return this.completeAnthropicStreaming(messages, tools, callbacks);
-    }
-    return this.completeOpenAIStreaming(messages, tools, callbacks);
-  }
-
-  private async completeOpenAI(messages: ChatMessage[], tools: ToolDefinition[]): Promise<AssistantResponse> {
-    const response = await fetch(`${this.config.baseUrl}/v1/chat/completions`, {
-      method: 'POST',
-      headers: this.headers(),
-      body: JSON.stringify({
-        model: this.config.model,
-        messages: messages.map(toOpenAIMessage),
-        tools: toOpenAITools(tools),
-        tool_choice: 'auto',
-        temperature: this.config.temperature,
-        max_tokens: this.config.maxTokens,
-      }),
-    });
-    const json = await parseResponse(response);
-    const choices = readArray(json.choices, 'choices');
-    const first = choices[0];
-    if (!isRecord(first) || !isRecord(first.message)) {
-      throw new MiMoCliError('OpenAI response did not contain a message');
-    }
-    const message = first.message;
-    const toolCalls = readOptionalArray(message.tool_calls).map(parseOpenAIToolCall);
-    const thinking = typeof message.reasoning_content === 'string' ? message.reasoning_content : undefined;
-    return {
-      content: typeof message.content === 'string' ? message.content : '',
-      toolCalls,
-      rawUsage: parseOpenAIUsage(json.usage),
-      thinking,
-    };
-  }
-
-  private async completeOpenAIStreaming(messages: ChatMessage[], tools: ToolDefinition[], callbacks: StreamCallbacks): Promise<AssistantResponse> {
-    const response = await fetch(`${this.config.baseUrl}/v1/chat/completions`, {
-      method: 'POST',
-      headers: this.headers(),
-      body: JSON.stringify({
-        model: this.config.model,
-        messages: messages.map(toOpenAIMessage),
-        tools: toOpenAITools(tools),
-        tool_choice: 'auto',
-        temperature: this.config.temperature,
-        max_tokens: this.config.maxTokens,
-        stream: true,
-      }),
-    });
-    if (!response.ok) {
-      const text = await response.text();
-      throw new MiMoCliError(`API request failed (${response.status}): ${text.slice(0, 500)}`);
-    }
-    const contentType = response.headers.get('content-type') ?? '';
-    if (!contentType.includes('text/event-stream') || !response.body) {
-      const json = await parseResponse(response);
-      const choices = readArray(json.choices, 'choices');
-      const first = choices[0];
-      if (!isRecord(first) || !isRecord(first.message)) {
-        throw new MiMoCliError('OpenAI response did not contain a message');
-      }
-      const message = first.message;
-      const toolCalls = readOptionalArray(message.tool_calls).map(parseOpenAIToolCall);
-      const thinking = typeof message.reasoning_content === 'string' ? message.reasoning_content : undefined;
-      const content = typeof message.content === 'string' ? message.content : '';
-      if (content) callbacks.onDelta?.(content);
-      return { content, toolCalls, rawUsage: parseOpenAIUsage(json.usage), thinking };
-    }
-    return this.parseOpenAIStream(response, callbacks);
-  }
-
-  private async parseOpenAIStream(response: Response, callbacks: StreamCallbacks): Promise<AssistantResponse> {
-    const reader = response.body?.getReader();
-    if (!reader) throw new MiMoCliError('No stream body');
-
-    const decoder = new TextDecoder();
-    let buffer = '';
-    let content = '';
-    let thinking = '';
-    const toolCallMap = new Map<number, { id: string; name: string; args: string }>();
-    let usage: TokenUsage | undefined;
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-
-      const lines = buffer.split('\n');
-      buffer = lines.pop() ?? '';
-
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed.startsWith('data: ')) continue;
-        const data = trimmed.slice(6);
-        if (data === '[DONE]') continue;
-
-        let chunk: unknown;
-        try { chunk = JSON.parse(data) as unknown; } catch { continue; }
-        if (!isRecord(chunk)) continue;
-
-        const choices = Array.isArray(chunk.choices) ? chunk.choices : [];
-        for (const choice of choices) {
-          if (!isRecord(choice) || !isRecord(choice.delta)) continue;
-          const delta = choice.delta;
-
-          if (typeof delta.reasoning_content === 'string' && delta.reasoning_content) {
-            thinking += delta.reasoning_content;
-            callbacks.onThinking?.(delta.reasoning_content);
-          }
-          if (typeof delta.content === 'string' && delta.content) {
-            content += delta.content;
-            callbacks.onDelta?.(delta.content);
-          }
-          if (Array.isArray(delta.tool_calls)) {
-            for (const tc of delta.tool_calls) {
-              if (!isRecord(tc) || typeof tc.index !== 'number') continue;
-              const existing = toolCallMap.get(tc.index);
-              if (!existing && isRecord(tc.function) && typeof tc.id === 'string') {
-                toolCallMap.set(tc.index, {
-                  id: tc.id,
-                  name: typeof tc.function.name === 'string' ? tc.function.name : '',
-                  args: typeof tc.function.arguments === 'string' ? tc.function.arguments : '',
-                });
-              } else if (existing && isRecord(tc.function)) {
-                if (typeof tc.function.name === 'string') existing.name += tc.function.name;
-                if (typeof tc.function.arguments === 'string') existing.args += tc.function.arguments;
-              }
-            }
-          }
-        }
-
-        if (isRecord(chunk.usage)) {
-          usage = parseOpenAIUsage(chunk.usage);
-        }
-      }
-    }
-
-    const toolCalls: ToolCall[] = [];
-    for (const [, tc] of [...toolCallMap.entries()].sort((a, b) => a[0] - b[0])) {
-      const input = tc.args ? (JSON.parse(tc.args) as unknown) : {};
-      if (isRecord(input)) {
-        toolCalls.push({ id: tc.id, name: tc.name, input });
-      }
-    }
-
-    return {
-      content,
-      toolCalls,
-      rawUsage: usage,
-      thinking: thinking || undefined,
-    };
+    return this.completeAnthropicStreaming(messages, tools, callbacks);
   }
 
   private async completeAnthropic(messages: ChatMessage[], tools: ToolDefinition[]): Promise<AssistantResponse> {
@@ -190,28 +36,7 @@ export class MiMoClient {
       }),
     });
     const json = await parseResponse(response);
-    const blocks = readArray(json.content, 'content');
-    const text: string[] = [];
-    const toolCalls: ToolCall[] = [];
-    let thinking = '';
-    for (const block of blocks) {
-      if (!isRecord(block)) continue;
-      if (block.type === 'thinking' && typeof block.thinking === 'string') {
-        thinking += block.thinking;
-      }
-      if (block.type === 'text' && typeof block.text === 'string') {
-        text.push(block.text);
-      }
-      if (block.type === 'tool_use' && typeof block.id === 'string' && typeof block.name === 'string' && isRecord(block.input)) {
-        toolCalls.push({ id: block.id, name: block.name, input: block.input });
-      }
-    }
-    return {
-      content: text.join('\n').trim(),
-      toolCalls,
-      rawUsage: parseAnthropicUsage(json.usage),
-      thinking: thinking || undefined,
-    };
+    return parseAnthropicMessage(json);
   }
 
   private async completeAnthropicStreaming(messages: ChatMessage[], tools: ToolDefinition[], callbacks: StreamCallbacks): Promise<AssistantResponse> {
@@ -234,6 +59,13 @@ export class MiMoClient {
     if (!response.ok) {
       const text = await response.text();
       throw new MiMoCliError(`API request failed (${response.status}): ${text.slice(0, 500)}`);
+    }
+    const contentType = response.headers.get('content-type') ?? '';
+    if (!contentType.includes('text/event-stream')) {
+      const json = await parseResponse(response);
+      const parsed = parseAnthropicMessage(json);
+      if (parsed.content) callbacks.onDelta?.(parsed.content);
+      return parsed;
     }
     return this.parseAnthropicStream(response, callbacks);
   }
@@ -340,34 +172,6 @@ async function parseResponse(response: Response): Promise<Record<string, unknown
   return json;
 }
 
-function toOpenAIMessage(message: ChatMessage): Record<string, unknown> {
-  if (message.role === 'tool') {
-    return {
-      role: 'tool',
-      content: message.content,
-      tool_call_id: message.toolCallId,
-    };
-  }
-  const output: Record<string, unknown> = {
-    role: message.role,
-    content: message.content,
-  };
-  if (message.thinking) {
-    output.reasoning_content = message.thinking;
-  }
-  if (message.toolCalls && message.toolCalls.length > 0) {
-    output.tool_calls = message.toolCalls.map((toolCall) => ({
-      id: toolCall.id,
-      type: 'function',
-      function: {
-        name: toolCall.name,
-        arguments: JSON.stringify(toolCall.input),
-      },
-    }));
-  }
-  return output;
-}
-
 function toAnthropicMessages(messages: ChatMessage[]): Record<string, unknown>[] {
   const output: Record<string, unknown>[] = [];
   for (const message of messages) {
@@ -409,31 +213,29 @@ function toAnthropicMessages(messages: ChatMessage[]): Record<string, unknown>[]
   return output;
 }
 
-function parseOpenAIToolCall(value: unknown): ToolCall {
-  if (!isRecord(value) || typeof value.id !== 'string' || !isRecord(value.function)) {
-    throw new MiMoCliError('OpenAI response contained an invalid tool call');
+function parseAnthropicMessage(json: Record<string, unknown>): AssistantResponse {
+  const blocks = readArray(json.content, 'content');
+  const text: string[] = [];
+  const toolCalls: ToolCall[] = [];
+  let thinking = '';
+  for (const block of blocks) {
+    if (!isRecord(block)) continue;
+    if (block.type === 'thinking' && typeof block.thinking === 'string') {
+      thinking += block.thinking;
+    }
+    if (block.type === 'text' && typeof block.text === 'string') {
+      text.push(block.text);
+    }
+    if (block.type === 'tool_use' && typeof block.id === 'string' && typeof block.name === 'string' && isRecord(block.input)) {
+      toolCalls.push({ id: block.id, name: block.name, input: block.input });
+    }
   }
-  const fn = value.function;
-  if (typeof fn.name !== 'string') {
-    throw new MiMoCliError('OpenAI tool call missed function name');
-  }
-  const rawArguments = typeof fn.arguments === 'string' && fn.arguments.length > 0 ? fn.arguments : '{}';
-  const input = JSON.parse(rawArguments) as unknown;
-  if (!isRecord(input)) {
-    throw new MiMoCliError(`Tool ${fn.name} arguments must be a JSON object`);
-  }
-  return { id: value.id, name: fn.name, input };
-}
-
-function parseOpenAIUsage(value: unknown): TokenUsage | undefined {
-  if (!isRecord(value)) return undefined;
-  const usage: TokenUsage = {};
-  if (typeof value.prompt_tokens === 'number') usage.inputTokens = value.prompt_tokens;
-  if (typeof value.completion_tokens === 'number') usage.outputTokens = value.completion_tokens;
-  if (isRecord(value.prompt_tokens_details) && typeof value.prompt_tokens_details.cached_tokens === 'number') {
-    usage.cacheReadInputTokens = value.prompt_tokens_details.cached_tokens;
-  }
-  return usage;
+  return {
+    content: text.join('\n').trim(),
+    toolCalls,
+    rawUsage: parseAnthropicUsage(json.usage),
+    thinking: thinking || undefined,
+  };
 }
 
 function parseAnthropicUsage(value: unknown): TokenUsage | undefined {
@@ -451,8 +253,4 @@ function readArray(value: unknown, name: string): unknown[] {
     throw new MiMoCliError(`API response missing array: ${name}`);
   }
   return value;
-}
-
-function readOptionalArray(value: unknown): unknown[] {
-  return Array.isArray(value) ? value : [];
 }

@@ -6,7 +6,6 @@ export type ConfigWizardStep =
   | 'baseUrlType'
   | 'tokenRegion'
   | 'customBaseUrl'
-  | 'format'
   | 'model'
   | 'maxTokens'
   | 'temperature'
@@ -27,7 +26,6 @@ export async function createConfigWizardState(): Promise<ConfigWizardState> {
   const existing = await readPersistedConfig(userConfigPath());
   const draft: PersistedConfig = {
     baseUrl: existing.baseUrl ?? DEFAULT_BASE_URL,
-    format: existing.format ?? 'openai',
     model: existing.model ?? DEFAULT_MODEL,
     temperature: existing.temperature ?? DEFAULT_TEMPERATURE,
   };
@@ -51,8 +49,6 @@ export function wizardPrompt(state: ConfigWizardState): string {
       return 'Token Plan region：cn / sgp / ams';
     case 'customBaseUrl':
       return 'Custom base URL';
-    case 'format':
-      return 'Wire format：openai / anthropic';
     case 'model':
       return `Model：${SUPPORTED_MODELS.join(' / ')}`;
     case 'maxTokens':
@@ -75,7 +71,7 @@ export function wizardPrompt(state: ConfigWizardState): string {
 export function wizardSummary(state: ConfigWizardState): string {
   const lines = [
     `Provider URL: ${state.draft.baseUrl ?? '(default)'}`,
-    `Format: ${state.draft.format ?? 'openai'}`,
+    'Format: Anthropic (/anthropic/v1/messages)',
     `Model: ${state.draft.model ?? DEFAULT_MODEL}`,
     `Max tokens: ${state.draft.maxTokens ?? 'auto'}`,
     `Temperature: ${state.draft.temperature ?? DEFAULT_TEMPERATURE}`,
@@ -95,21 +91,17 @@ export function updateWizard(state: ConfigWizardState, rawInput: string): Config
 
   try {
     if (state.step === 'baseUrlType') {
-      if (input === 'api' || input === '') return next(state, 'format', { baseUrl: DEFAULT_BASE_URL });
+      if (input === 'api' || input === '') return next(state, 'model', { baseUrl: DEFAULT_BASE_URL });
       if (input === 'token') return next(state, 'tokenRegion', {});
       if (input === 'custom') return next(state, 'customBaseUrl', {});
       return withError(state, 'Please enter api / token / custom');
     }
     if (state.step === 'tokenRegion') {
-      return next(state, 'format', { baseUrl: tokenPlanBaseUrl(input) });
+      return next(state, 'model', { baseUrl: tokenPlanBaseUrl(input) });
     }
     if (state.step === 'customBaseUrl') {
       if (!URL.canParse(input)) return withError(state, 'Please enter a valid URL');
-      return next(state, 'format', { baseUrl: input });
-    }
-    if (state.step === 'format') {
-      if (input !== 'openai' && input !== 'anthropic') return withError(state, 'Please enter openai or anthropic');
-      return next(state, 'model', { format: input });
+      return next(state, 'model', { baseUrl: input });
     }
     if (state.step === 'model') {
       if (!SUPPORTED_MODELS.includes(input as (typeof SUPPORTED_MODELS)[number])) return withError(state, 'Unsupported model');
@@ -171,7 +163,6 @@ function previousStep(step: ConfigWizardStep): ConfigWizardStep {
     'baseUrlType',
     'tokenRegion',
     'customBaseUrl',
-    'format',
     'model',
     'maxTokens',
     'temperature',

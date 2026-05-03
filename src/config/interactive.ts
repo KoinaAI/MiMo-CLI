@@ -1,6 +1,6 @@
 import { confirm, input, select } from '@inquirer/prompts';
 import { DEFAULT_BASE_URL, DEFAULT_MAX_TOKENS, DEFAULT_MODEL, DEFAULT_TEMPERATURE, SUPPORTED_MODELS } from '../constants.js';
-import type { ApiFormat, PersistedConfig } from '../types.js';
+import type { PersistedConfig } from '../types.js';
 import { readPersistedConfig, tokenPlanBaseUrl, userConfigPath, writeUserConfig } from './config.js';
 
 export async function configureInteractively(): Promise<string> {
@@ -34,14 +34,6 @@ export async function configureInteractively(): Promise<string> {
     });
   }
 
-  const format = await select<ApiFormat>({
-    message: 'API format',
-    choices: [
-      { name: 'OpenAI compatible (/v1)', value: 'openai' },
-      { name: 'Anthropic compatible (/anthropic)', value: 'anthropic' },
-    ],
-    default: existing.format ?? 'openai',
-  });
   const model = await select({
     message: 'Default model',
     choices: SUPPORTED_MODELS.map((name) => ({ name, value: name })),
@@ -64,7 +56,6 @@ export async function configureInteractively(): Promise<string> {
 
   const config: PersistedConfig = {
     baseUrl,
-    format,
     model,
     maxTokens: Number.parseInt(maxTokensText, 10),
     temperature: Number.parseFloat(temperatureText),

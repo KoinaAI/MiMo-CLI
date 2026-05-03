@@ -6,7 +6,7 @@ const config: RuntimeConfig = {
   apiKey: 'key',
   baseUrl: 'https://api.xiaomimimo.com',
   model: 'mimo-v2.5-pro',
-  format: 'openai',
+  format: 'anthropic',
   maxTokens: 4096,
   temperature: 0,
 };
@@ -31,24 +31,19 @@ describe('CodingAgent events', () => {
       if (calls === 1) {
         return new Response(
           JSON.stringify({
-            choices: [
+            content: [
               {
-                message: {
-                  content: '',
-                  tool_calls: [
-                    {
-                      id: 'call-1',
-                      function: { name: 'write_file', arguments: '{"path":"x.txt","content":"x"}' },
-                    },
-                  ],
-                },
+                type: 'tool_use',
+                id: 'call-1',
+                name: 'write_file',
+                input: { path: 'x.txt', content: 'x' },
               },
             ],
           }),
           { status: 200 },
         );
       }
-      return new Response(JSON.stringify({ choices: [{ message: { content: 'done' } }] }), { status: 200 });
+      return new Response(JSON.stringify({ content: [{ type: 'text', text: 'done' }] }), { status: 200 });
     };
     const tool: ToolDefinition = {
       name: 'write_file',
@@ -77,24 +72,19 @@ describe('CodingAgent events', () => {
       if (calls === 1) {
         return new Response(
           JSON.stringify({
-            choices: [
+            content: [
               {
-                message: {
-                  content: '',
-                  tool_calls: [
-                    {
-                      id: 'call-1',
-                      function: { name: 'read_file', arguments: '{"path":"README.md"}' },
-                    },
-                  ],
-                },
+                type: 'tool_use',
+                id: 'call-1',
+                name: 'read_file',
+                input: { path: 'README.md' },
               },
             ],
           }),
           { status: 200 },
         );
       }
-      return new Response(JSON.stringify({ choices: [{ message: { content: 'done' } }] }), { status: 200 });
+      return new Response(JSON.stringify({ content: [{ type: 'text', text: 'done' }] }), { status: 200 });
     };
     const events: AgentEvent[] = [];
     const tool: ToolDefinition = {
@@ -126,24 +116,19 @@ describe('CodingAgent events', () => {
       if (calls === 1) {
         return new Response(
           JSON.stringify({
-            choices: [
+            content: [
               {
-                message: {
-                  content: '',
-                  tool_calls: [
-                    {
-                      id: 'call-1',
-                      function: { name: 'run_shell', arguments: '{"command":"echo hi"}' },
-                    },
-                  ],
-                },
+                type: 'tool_use',
+                id: 'call-1',
+                name: 'run_shell',
+                input: { command: 'echo hi' },
               },
             ],
           }),
           { status: 200 },
         );
       }
-      return new Response(JSON.stringify({ choices: [{ message: { content: 'done' } }] }), { status: 200 });
+      return new Response(JSON.stringify({ content: [{ type: 'text', text: 'done' }] }), { status: 200 });
     };
     const events: AgentEvent[] = [];
     const tool: ToolDefinition = {

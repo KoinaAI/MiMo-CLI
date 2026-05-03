@@ -6,7 +6,7 @@ const config: RuntimeConfig = {
   apiKey: 'key',
   baseUrl: 'https://api.xiaomimimo.com',
   model: 'mimo-v2.5-pro',
-  format: 'openai',
+  format: 'anthropic',
   maxTokens: 4096,
   temperature: 0,
 };
@@ -26,8 +26,8 @@ const tools: ToolDefinition[] = [
 
 describe('theme', () => {
   it('SPLASH contains branding text', () => {
-    expect(SPLASH).toContain('M I M O');
-    expect(SPLASH).toContain('Code CLI');
+    expect(SPLASH).toContain('Welcome to MiMo Code');
+    expect(SPLASH).toContain('/settings for config');
   });
 
   it('MODE_LABELS has all three modes', () => {

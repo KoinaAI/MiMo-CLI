@@ -11,7 +11,7 @@ import { envToConfig, loadConfig, projectConfigPath, readPersistedConfig, tokenP
 import { describeHookConfig, runHooks } from './hooks.js';
 import { createMcpTools } from './mcp/stdio.js';
 import { defaultTools } from './tools/index.js';
-import type { ApiFormat, HookEvent, HookPayload, InteractionMode, PersistedConfig, SandboxLevel } from './types.js';
+import type { HookEvent, HookPayload, InteractionMode, PersistedConfig, SandboxLevel } from './types.js';
 import { errorMessage } from './utils/errors.js';
 import { runTui } from './ui/tui.js';
 
@@ -25,7 +25,6 @@ program
   .option('--model <model>', `model (${SUPPORTED_MODELS.join(', ')})`)
   .option('--base-url <url>', 'MiMo base URL')
   .option('--token-plan-region <region>', 'Token Plan region: cn, sgp, ams')
-  .option('--format <format>', 'API format: openai or anthropic')
   .option('--max-tokens <number>', `max output tokens (default ${DEFAULT_MAX_TOKENS})`)
   .option('--temperature <number>', `sampling temperature (default ${DEFAULT_TEMPERATURE})`)
   .option('--dry-run', 'show writes and commands without changing files', false)
@@ -34,6 +33,7 @@ program
   .option('--no-tui', 'use prompt-based console mode instead of the full TUI')
   .option('--mode <mode>', 'interaction mode: plan, agent, or yolo (default agent)')
   .option('--sandbox <level>', 'sandbox level: read-only, workspace-write, or danger-full-access')
+  .option('--resume <session-id>', 'resume a saved session by id or id prefix')
   .action(async (options) => {
     await runInteractive(options);
   });
@@ -46,7 +46,6 @@ program
   .option('--model <model>', `model (${SUPPORTED_MODELS.join(', ')})`)
   .option('--base-url <url>', 'MiMo base URL')
   .option('--token-plan-region <region>', 'Token Plan region: cn, sgp, ams')
-  .option('--format <format>', 'API format: openai or anthropic')
   .option('--max-tokens <number>', `max output tokens (default ${DEFAULT_MAX_TOKENS})`)
   .option('--temperature <number>', `sampling temperature (default ${DEFAULT_TEMPERATURE})`)
   .option('--dry-run', 'show writes and commands without changing files', false)
@@ -263,6 +262,7 @@ async function runTask(task: string, options: CliOptions): Promise<void> {
       maxIterations: parsePositiveInteger(options.maxIterations ?? '12', '--max-iterations'),
       mode,
       ...(sandbox ? { sandbox } : {}),
+      ...(options.resume ? { resumeSessionId: options.resume } : {}),
     });
   } catch (error) {
     console.error(chalk.red(errorMessage(error)));
@@ -319,7 +319,6 @@ function parseOverrides(options: CliOptions): PersistedConfig {
   if (options.model) overrides.model = options.model;
   if (options.baseUrl) overrides.baseUrl = options.baseUrl;
   if (options.tokenPlanRegion) overrides.baseUrl = tokenPlanBaseUrl(options.tokenPlanRegion);
-  if (options.format) overrides.format = options.format as ApiFormat;
   if (options.maxTokens) overrides.maxTokens = parsePositiveInteger(options.maxTokens, '--max-tokens');
   if (options.temperature) overrides.temperature = parseNonNegativeNumber(options.temperature, '--temperature');
   return overrides;
@@ -389,7 +388,6 @@ interface CliOptions {
   model?: string;
   baseUrl?: string;
   tokenPlanRegion?: string;
-  format?: string;
   maxTokens?: string;
   temperature?: string;
   dryRun?: boolean;
@@ -398,6 +396,7 @@ interface CliOptions {
   tui?: boolean;
   mode?: string;
   sandbox?: string;
+  resume?: string;
 }
 
 await program.parseAsync();

@@ -7,6 +7,7 @@ describe('parseSlashCommand', () => {
     expect(parseSlashCommand('/new sprint 1')).toEqual({ name: 'new', args: ['sprint', '1'] });
     expect(parseSlashCommand('/settings')).toEqual({ name: 'settings', args: [] });
     expect(parseSlashCommand('/model mimo-v2.5')).toEqual({ name: 'model', args: ['mimo-v2.5'] });
+    expect(parseSlashCommand('/worktree list')).toEqual({ name: 'worktree', args: ['list'] });
   });
 
   it('ignores normal prompts and unknown commands', () => {
