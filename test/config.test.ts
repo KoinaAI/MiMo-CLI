@@ -15,7 +15,6 @@ describe('envToConfig', () => {
         OPENAI_API_KEY: 'openai-key',
         MIMO_BASE_URL: 'https://example.test',
         MIMO_MODEL: 'mimo-v2.5',
-        MIMO_API_FORMAT: 'anthropic',
         MIMO_MAX_TOKENS: '123',
         MIMO_TEMPERATURE: '0.2',
       }),
@@ -23,7 +22,6 @@ describe('envToConfig', () => {
       apiKey: 'mimo-key',
       baseUrl: 'https://example.test',
       model: 'mimo-v2.5',
-      format: 'anthropic',
       maxTokens: 123,
       temperature: 0.2,
     });
@@ -38,7 +36,6 @@ describe('parsePersistedConfig', () => {
           apiKey: 'key',
           baseUrl: 'https://api.xiaomimimo.com',
           model: 'mimo-v2.5-pro',
-          format: 'openai',
           maxTokens: 4096,
           temperature: 0,
           systemPrompt: 'custom',
@@ -49,15 +46,14 @@ describe('parsePersistedConfig', () => {
       apiKey: 'key',
       baseUrl: 'https://api.xiaomimimo.com',
       model: 'mimo-v2.5-pro',
-      format: 'openai',
       maxTokens: 4096,
       temperature: 0,
       systemPrompt: 'custom',
     });
   });
 
-  it('rejects invalid format', () => {
-    expect(() => parsePersistedConfig({ format: 'bad' }, 'test')).toThrow(/Unsupported API format/);
+  it('ignores legacy format settings', () => {
+    expect(parsePersistedConfig({ format: 'bad' }, 'test')).toEqual({});
   });
 
   it('parses expanded hook workflow fields', () => {

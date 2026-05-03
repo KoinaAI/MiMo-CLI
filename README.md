@@ -1,6 +1,6 @@
 # MiMo Code CLI
 
-MiMo Code CLI is a terminal-based Coding Agent powered by Xiaomi's MiMo models. It can read code, search text, edit files, and run commands within your local workspace, calling the MiMo API via an OpenAI-compatible or Anthropic-compatible interface to complete software development tasks.
+MiMo Code CLI is a terminal-based Coding Agent powered by Xiaomi's MiMo models. It can read code, search text, edit files, and run commands within your local workspace, calling the MiMo API via the Anthropic-compatible interface to complete software development tasks.
 
 ## Features
 
@@ -8,9 +8,9 @@ MiMo Code CLI is a terminal-based Coding Agent powered by Xiaomi's MiMo models. 
 - Claude Code–style borderless full-screen TUI: splash screen, message stream, tool calls, tool results, bottom input box, status bar, token usage, and keyboard shortcut hints.
 - Approval UI for write-file, edit-file, and run-shell operations.
 - Built-in `/settings` wizard in the TUI — no need to leave the terminal.
-- Support for `/`-prefixed slash commands, Tab command completion, resumable sessions, MCP stdio tools, Skill loading, and Hooks.
+- Support for `/`-prefixed slash commands, Claude-style command selection, resumable sessions, MCP stdio tools, Skill loading, Hooks, and git worktrees.
 - Works with both standard pay-as-you-go API Keys and Token Plan Keys.
-- Supports OpenAI-compatible `/v1` and Anthropic-compatible `/anthropic` API formats.
+- Uses the Anthropic-compatible `/anthropic` API format.
 - Built-in coding tools: list directory, read file, write file, exact replace, full-text search, run shell command.
 - Multi-level configuration: environment variables, project `.mimo-code.json`, user `~/.mimo-code/config.json`.
 - File access is restricted to the current workspace by default to prevent unauthorized reads/writes.
@@ -76,16 +76,13 @@ mimo-code base-url --region sgp
 mimo-code base-url --region ams
 ```
 
-### API Formats
+### API Format
 
-MiMo Code CLI supports two API formats:
+MiMo Code CLI uses the Anthropic-compatible endpoint only:
 
 | Format | Endpoint |
 | --- | --- |
-| OpenAI-compatible | `<baseUrl>/v1/chat/completions` |
 | Anthropic-compatible | `<baseUrl>/anthropic/v1/messages` |
-
-Select with `--format openai` or `--format anthropic`, or save the preference in config.
 
 ### Models
 
@@ -129,7 +126,7 @@ Or inside the TUI:
 /settings
 ```
 
-The TUI settings wizard covers: API Key, Base URL type, Token Plan region, custom Base URL, API format, model, max output tokens, temperature, system prompt, MCP servers, skills, and hooks. Configuration is written to the user config file:
+The TUI settings wizard covers: API Key, Base URL type, Token Plan region, custom Base URL, model, max output tokens, temperature, system prompt, MCP servers, skills, and hooks. Configuration is written to the user config file:
 
 ```text
 ~/.mimo-code/config.json
@@ -141,7 +138,6 @@ Example:
 {
   "apiKey": "YOUR_MIMO_API_KEY",
   "baseUrl": "https://api.xiaomimimo.com",
-  "format": "openai",
   "model": "mimo-v2.5-pro",
   "maxTokens": 4096,
   "temperature": 0,
@@ -181,7 +177,6 @@ Configuration can also be provided via environment variables:
 export MIMO_API_KEY="YOUR_MIMO_API_KEY"
 export MIMO_BASE_URL="https://api.xiaomimimo.com"
 export MIMO_MODEL="mimo-v2.5-pro"
-export MIMO_API_FORMAT="openai"
 ```
 
 Supported environment variables:
@@ -191,7 +186,6 @@ Supported environment variables:
 | `MIMO_API_KEY` | MiMo API Key — highest priority |
 | `MIMO_BASE_URL` | Base URL |
 | `MIMO_MODEL` | Default model |
-| `MIMO_API_FORMAT` | `openai` or `anthropic` |
 | `MIMO_MAX_TOKENS` | Maximum output token count |
 | `MIMO_TEMPERATURE` | Sampling temperature |
 | `OPENAI_API_KEY` | Compatibility fallback |
@@ -206,7 +200,6 @@ Create `.mimo-code.json` in the project root to override user defaults:
 ```json
 {
   "baseUrl": "https://token-plan-sgp.xiaomimimo.com",
-  "format": "anthropic",
   "model": "mimo-v2.5",
   "maxTokens": 8192,
   "temperature": 0,
@@ -254,8 +247,8 @@ Keyboard shortcuts:
 | Ctrl+L | Clear the current message stream |
 | Ctrl+U | Clear the current input |
 | Ctrl+W | Delete the previous word |
-| Esc | Cancel approval / clear continuation / exit when idle |
-| Ctrl+C | Interrupt current run / quit |
+| Esc | Cancel approval / clear continuation; double-tap when idle to edit the previous message and roll back the turn |
+| Ctrl+C | Interrupt current run; double-tap to quit |
 
 Slash commands:
 
@@ -267,7 +260,7 @@ Slash commands:
 | `/sessions` | List saved sessions |
 | `/new [title]` | Start a new resumable session |
 | `/load <session-id-prefix>` | Load a saved session |
-| `/resume` | Resume the most recently saved session |
+| `/resume [session-id-prefix]` | Resume the most recent saved session or a specific session |
 | `/save` | Save the current session to `~/.mimo-code/sessions/` |
 | `/mcp` | Show current MCP server configuration |
 | `/skill` | Show skills declared in the config file |
@@ -280,7 +273,8 @@ Slash commands:
 | `/diff` | Show workspace git diff |
 | `/doctor` | Run configuration diagnostics |
 | `/memory [note]` | Add or list persistent memory notes |
-| `/undo` | Undo current changes via git checkout |
+| `/undo` | Undo unstaged changes to HEAD |
+| `/worktree [list\|new\|open\|remove]` | Manage git worktrees |
 | `/compact` | Summarize history to reduce context pressure |
 | `/context` | Show current context window usage |
 | `/cost` | Show estimated cost for the current session |
@@ -402,17 +396,15 @@ mimo-code run -C /path/to/project "Fix TypeScript type errors"
 MIMO_API_KEY="YOUR_TOKEN_PLAN_KEY" \
   mimo-code run \
   --token-plan-region sgp \
-  --format openai \
   --model mimo-v2.5-pro \
   "Inspect the project and run the tests"
 ```
 
-### Using the Anthropic-compatible Format
+### Using a Custom Base URL
 
 ```bash
 mimo-code run \
   --base-url https://api.xiaomimimo.com \
-  --format anthropic \
   --model mimo-v2.5 \
   "Explain the code structure in the current directory"
 ```

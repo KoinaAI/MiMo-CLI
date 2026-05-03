@@ -13,7 +13,7 @@ import {
   USER_CONFIG_DIR,
   USER_CONFIG_FILE,
 } from '../constants.js';
-import type { ApiFormat, HookEvent, PersistedConfig, RuntimeConfig } from '../types.js';
+import type { HookEvent, PersistedConfig, RuntimeConfig } from '../types.js';
 import { MiMoCliError } from '../utils/errors.js';
 import { isRecord, optionalNumber, optionalString } from '../utils/json.js';
 
@@ -76,7 +76,7 @@ export async function loadConfig(cwd: string, overrides: PersistedConfig = {}): 
     apiKey,
     baseUrl: stripTrailingSlash(merged.baseUrl ?? DEFAULT_BASE_URL),
     model,
-    format: normalizeFormat(merged.format ?? 'openai'),
+    format: 'anthropic',
     maxTokens,
     temperature: merged.temperature ?? DEFAULT_TEMPERATURE,
     ...(merged.systemPrompt ? { systemPrompt: merged.systemPrompt } : {}),
@@ -105,8 +105,6 @@ export function envToConfig(env: NodeJS.ProcessEnv = process.env): PersistedConf
   if (baseUrl) config.baseUrl = baseUrl;
   const model = env.MIMO_MODEL;
   if (model) config.model = model;
-  const format = env.MIMO_API_FORMAT;
-  if (format) config.format = normalizeFormat(format);
   const maxTokens = env.MIMO_MAX_TOKENS;
   if (maxTokens) config.maxTokens = Number.parseInt(maxTokens, 10);
   const temperature = env.MIMO_TEMPERATURE;
@@ -125,8 +123,7 @@ export function parsePersistedConfig(value: unknown, source: string): PersistedC
   if (baseUrl) config.baseUrl = baseUrl;
   const model = optionalString(value.model, 'model');
   if (model) config.model = model;
-  const format = optionalString(value.format, 'format');
-  if (format) config.format = normalizeFormat(format);
+  optionalString(value.format, 'format');
   const maxTokens = optionalNumber(value.maxTokens, 'maxTokens');
   if (maxTokens !== undefined) config.maxTokens = maxTokens;
   const temperature = optionalNumber(value.temperature, 'temperature');
@@ -151,13 +148,6 @@ export function maxOutputTokensForModel(model: string): number {
 
 export function clampMaxTokens(model: string, maxTokens: number): number {
   return Math.min(Math.max(1, Math.floor(maxTokens)), maxOutputTokensForModel(model));
-}
-
-function normalizeFormat(format: string): ApiFormat {
-  if (format === 'openai' || format === 'anthropic') {
-    return format;
-  }
-  throw new MiMoCliError(`Unsupported API format: ${format}`);
 }
 
 function stripTrailingSlash(value: string): string {

@@ -15,17 +15,6 @@ export interface AnthropicTool {
   input_schema: Record<string, unknown>;
 }
 
-export function toOpenAITools(tools: ToolDefinition[]): OpenAITool[] {
-  return tools.map((tool) => ({
-    type: 'function',
-    function: {
-      name: tool.name,
-      description: tool.description,
-      parameters: tool.inputSchema,
-    },
-  }));
-}
-
 export function toAnthropicTools(tools: ToolDefinition[]): AnthropicTool[] {
   return tools.map((tool) => ({
     name: tool.name,

@@ -8,8 +8,15 @@ import type { CostEstimate, InteractionMode, RuntimeConfig, SessionRecord, ToolD
  * branding tagline `Intelligent Coding Agent` is asserted by tests.
  */
 export const SPLASH = [
-  `${chalk.bold.cyan('M I M O')} ${chalk.dim('Code CLI')} ${chalk.dim('agentic')}`,
-  `${chalk.dim('/help commands')} ${chalk.dim('·')} ${chalk.dim('/info status')} ${chalk.dim('·')} ${chalk.dim('Shift+Tab mode')}`,
+  `${chalk.cyan('Welcome to MiMo Code')} ${chalk.dim('v0.1.0')}`,
+  chalk.dim('……………………………………………………………………………………'),
+  '                                                          ',
+  `      ${chalk.cyan('█████████')}                         ${chalk.dim('░░░░░░')}`,
+  `      ${chalk.cyan('██▄███▄██')}                       ${chalk.dim('░░░░░░░░░░')}`,
+  `      ${chalk.cyan('█████████')}                       ${chalk.dim('░░░░░░░░░░')}`,
+  '                                                          ',
+  `${chalk.dim('…………………………………………')} ${chalk.cyan('█ █   █ █')} ${chalk.dim('……………………')}`,
+  `${chalk.dim('/help for commands')} ${chalk.dim('·')} ${chalk.dim('/settings for config')} ${chalk.dim('·')} ${chalk.dim('Shift+Tab switches mode')}`,
 ].join('\n');
 
 export const MODE_LABELS: Record<InteractionMode, string> = {
@@ -30,7 +37,7 @@ export function statusLine(
   const parts = [
     MODE_LABELS[mode],
     chalk.yellow(config.model),
-    chalk.gray(`${config.format}`),
+    chalk.gray('anthropic'),
     chalk.gray(`max ${config.maxTokens}`),
     chalk.cyan(`${tools.length} tools`),
     chalk.magenta(`MCP ${config.mcpServers?.filter((server) => server.enabled !== false).length ?? 0}`),

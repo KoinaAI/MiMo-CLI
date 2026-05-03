@@ -1,4 +1,4 @@
-export type ApiFormat = 'openai' | 'anthropic';
+export type ApiFormat = 'anthropic';
 
 export type MessageRole = 'system' | 'user' | 'assistant' | 'tool';
 
@@ -66,6 +66,7 @@ export interface AgentOptions {
   autoApprove: boolean;
   mode?: InteractionMode | undefined;
   sandbox?: SandboxLevel | undefined;
+  resumeSessionId?: string | undefined;
 }
 
 export interface AgentResult {

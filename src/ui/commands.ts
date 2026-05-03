@@ -3,6 +3,7 @@ export type SlashCommandName =
   | 'config'
   | 'settings'
   | 'sessions'
+  | 'worktree'
   | 'new'
   | 'load'
   | 'save'
@@ -60,6 +61,7 @@ export const SLASH_COMMANDS: SlashCommandSpec[] = [
   { name: 'load', usage: '/load <session-id-prefix>', description: 'Load a saved session' },
   { name: 'resume', usage: '/resume', description: 'Resume the most recently saved session' },
   { name: 'save', usage: '/save', description: 'Save current session' },
+  { name: 'worktree', usage: '/worktree [list|new|open|remove]', description: 'Manage git worktrees' },
   { name: 'mcp', usage: '/mcp', description: 'Show configured MCP servers' },
   { name: 'skill', usage: '/skill', description: 'Show configured skills' },
   { name: 'skills', usage: '/skills', description: 'Discover skills from .mimo/skills and ~/.mimo-code/skills' },
@@ -75,7 +77,7 @@ export const SLASH_COMMANDS: SlashCommandSpec[] = [
   { name: 'diff', usage: '/diff', description: 'Show workspace git diff since session start' },
   { name: 'doctor', usage: '/doctor', description: 'Run diagnostic checks on configuration and tools' },
   { name: 'memory', usage: '/memory [note]', description: 'Add or list persistent memory notes' },
-  { name: 'undo', usage: '/undo', description: 'Undo last file change (git checkout)' },
+  { name: 'undo', usage: '/undo', description: 'Undo unstaged file changes' },
   { name: 'expand', usage: '/expand <#index|all>', description: 'Expand a collapsed transcript block' },
   { name: 'collapse', usage: '/collapse <#index|all>', description: 'Collapse a transcript block' },
   { name: 'bug', usage: '/bug <description>', description: 'Report a bug or issue' },
