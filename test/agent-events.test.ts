@@ -114,6 +114,54 @@ describe('CodingAgent events', () => {
     );
     await agent.run('read', { onEvent: (event) => events.push(event) });
     expect(events.some((event) => event.type === 'hook_result' && event.hook === 'echo' && event.output === 'hooked')).toBe(true);
+    expect(events.some((event) => event.type === 'workflow_status' && event.message.includes('tools'))).toBe(true);
+    globalThis.fetch = originalFetch;
+  });
+
+  it('emits blocked events when hooks cancel tool use', async () => {
+    const originalFetch = globalThis.fetch;
+    let calls = 0;
+    globalThis.fetch = async () => {
+      calls += 1;
+      if (calls === 1) {
+        return new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  content: '',
+                  tool_calls: [
+                    {
+                      id: 'call-1',
+                      function: { name: 'run_shell', arguments: '{"command":"echo hi"}' },
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response(JSON.stringify({ choices: [{ message: { content: 'done' } }] }), { status: 200 });
+    };
+    const events: AgentEvent[] = [];
+    const tool: ToolDefinition = {
+      name: 'run_shell',
+      description: 'run',
+      inputSchema: { type: 'object' },
+      run: async () => 'ran',
+    };
+    const agent = new CodingAgent(
+      {
+        ...config,
+        hooks: [{ name: 'blocker', event: 'pre_tool_use', command: 'node', args: ['-e', 'process.exit(2)'] }],
+      },
+      [tool],
+      { cwd: process.cwd(), dryRun: false, autoApprove: true, maxIterations: 2 },
+    );
+    await agent.run('run', { onEvent: (event) => events.push(event) });
+    expect(events.some((event) => event.type === 'tool_blocked' && event.name === 'run_shell')).toBe(true);
     globalThis.fetch = originalFetch;
   });
 });

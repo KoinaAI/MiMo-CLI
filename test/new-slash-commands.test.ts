@@ -8,6 +8,12 @@ describe('new slash commands', () => {
     expect(parseSlashCommand('/mode')).toEqual({ name: 'mode', args: [] });
   });
 
+  it('parses /model and /info commands', () => {
+    expect(parseSlashCommand('/model')).toEqual({ name: 'model', args: [] });
+    expect(parseSlashCommand('/model mimo-v2.5')).toEqual({ name: 'model', args: ['mimo-v2.5'] });
+    expect(parseSlashCommand('/info')).toEqual({ name: 'info', args: [] });
+  });
+
   it('parses /compact command', () => {
     expect(parseSlashCommand('/compact')).toEqual({ name: 'compact', args: [] });
   });

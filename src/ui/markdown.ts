@@ -9,12 +9,15 @@ import { highlightCode } from './syntax.js';
  * blockquotes. Aimed at producing Codex/Claude-Code-style output without
  * pulling in a heavy markdown engine.
  */
-export function renderMarkdown(text: string): string {
+const DEFAULT_TABLE_WIDTH = 96;
+
+export function renderMarkdown(text: string, options: { width?: number } = {}): string {
   const lines = text.split('\n');
   const output: string[] = [];
   let inCodeBlock = false;
   let codeLang = '';
   const codeLines: string[] = [];
+  const tableWidth = options.width ?? DEFAULT_TABLE_WIDTH;
 
   const flushCodeBlock = (): void => {
     const lang = codeLang || 'code';
@@ -57,7 +60,7 @@ export function renderMarkdown(text: string): string {
         lineIndex += 1;
       }
       lineIndex -= 1;
-      output.push(...renderTable(tableLines));
+      output.push(...renderTable(tableLines, tableWidth));
       continue;
     }
 
@@ -151,7 +154,9 @@ function renderInline(text: string): string {
 
 function isTableRow(line: string): boolean {
   const trimmed = line.trim();
-  return trimmed.startsWith('|') && trimmed.endsWith('|') && trimmed.slice(1, -1).includes('|');
+  if (!trimmed.includes('|')) return false;
+  const cells = splitTableRow(trimmed);
+  return cells.length >= 2;
 }
 
 function isTableSeparator(line: string): boolean {
@@ -160,18 +165,47 @@ function isTableSeparator(line: string): boolean {
 }
 
 function splitTableRow(line: string): string[] {
-  return line.trim().slice(1, -1).split('|').map((cell) => cell.trim());
+  const trimmed = line.trim();
+  const content = trimmed.startsWith('|') && trimmed.endsWith('|') ? trimmed.slice(1, -1) : trimmed;
+  const cells: string[] = [];
+  let cell = '';
+  let escaped = false;
+  let inCode = false;
+  for (const char of content) {
+    if (escaped) {
+      cell += char;
+      escaped = false;
+      continue;
+    }
+    if (char === '\\') {
+      escaped = true;
+      cell += char;
+      continue;
+    }
+    if (char === '`') inCode = !inCode;
+    if (char === '|' && !inCode) {
+      cells.push(cell.trim().replace(/\\\|/g, '|'));
+      cell = '';
+      continue;
+    }
+    cell += char;
+  }
+  cells.push(cell.trim().replace(/\\\|/g, '|'));
+  return cells;
 }
 
-function renderTable(lines: string[]): string[] {
+function renderTable(lines: string[], maxWidth: number): string[] {
   if (lines.length < 2) return lines.map((line) => `  ${renderInline(line)}`);
   const header = splitTableRow(lines[0] ?? '');
   const rows = lines.slice(2).map(splitTableRow);
   const columnCount = Math.max(header.length, ...rows.map((row) => row.length));
+  const available = Math.max(columnCount * 4, maxWidth - 4 - (columnCount + 1));
   const widths = Array.from({ length: columnCount }, (_, index) => {
     const values = [header[index] ?? '', ...rows.map((row) => row[index] ?? '')];
-    return Math.min(36, Math.max(3, ...values.map((value) => visibleLength(value))));
+    const natural = Math.max(3, ...values.map((value) => visibleLength(value)));
+    return Math.min(32, natural);
   });
+  shrinkWidths(widths, available);
   const separator = `  ${chalk.dim('┌')}${widths.map((width) => chalk.dim('─'.repeat(width + 2))).join(chalk.dim('┬'))}${chalk.dim('┐')}`;
   const divider = `  ${chalk.dim('├')}${widths.map((width) => chalk.dim('─'.repeat(width + 2))).join(chalk.dim('┼'))}${chalk.dim('┤')}`;
   const bottom = `  ${chalk.dim('└')}${widths.map((width) => chalk.dim('─'.repeat(width + 2))).join(chalk.dim('┴'))}${chalk.dim('┘')}`;
@@ -182,6 +216,17 @@ function renderTable(lines: string[]): string[] {
     ...rows.map((row) => renderTableRow(row, widths, false)),
     bottom,
   ];
+}
+
+function shrinkWidths(widths: number[], available: number): void {
+  while (widths.reduce((sum, width) => sum + width, 0) > available) {
+    let largestIndex = 0;
+    for (let index = 1; index < widths.length; index += 1) {
+      if ((widths[index] ?? 0) > (widths[largestIndex] ?? 0)) largestIndex = index;
+    }
+    if ((widths[largestIndex] ?? 0) <= 6) break;
+    widths[largestIndex] = (widths[largestIndex] ?? 6) - 1;
+  }
 }
 
 function renderTableRow(row: string[], widths: number[], header: boolean): string {
@@ -195,7 +240,7 @@ function renderTableRow(row: string[], widths: number[], header: boolean): strin
 
 function truncateCell(value: string, width: number): string {
   if (visibleLength(value) <= width) return value;
-  return `${value.slice(0, Math.max(0, width - 1))}…`;
+  return `${Array.from(value).slice(0, Math.max(0, width - 1)).join('')}…`;
 }
 
 function visibleLength(value: string): number {

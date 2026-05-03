@@ -8,10 +8,8 @@ import type { CostEstimate, InteractionMode, RuntimeConfig, SessionRecord, ToolD
  * branding tagline `Intelligent Coding Agent` is asserted by tests.
  */
 export const SPLASH = [
-  chalk.cyan('  ╭────────────────────────────╮'),
-  chalk.cyan('  │  ') + chalk.bold.white('M I M O') + chalk.cyan('  ') + chalk.gray('Code CLI') + chalk.cyan('        │'),
-  chalk.cyan('  ╰────────────────────────────╯'),
-  '',
+  `${chalk.bold.cyan('M I M O')} ${chalk.dim('Code CLI')} ${chalk.dim('agentic')}`,
+  `${chalk.dim('/help commands')} ${chalk.dim('·')} ${chalk.dim('/info status')} ${chalk.dim('·')} ${chalk.dim('Shift+Tab mode')}`,
 ].join('\n');
 
 export const MODE_LABELS: Record<InteractionMode, string> = {
@@ -136,16 +134,13 @@ export interface WorkflowSummary {
 }
 
 export function formatWorkflowSummary(summary: WorkflowSummary): string {
-  const rows = [
-    ['Built-in tools', summary.builtinTools],
-    ['MCP servers', summary.mcpServers],
-    ['MCP tools', summary.mcpTools],
-    ['Configured skills', summary.configuredSkills],
-    ['Discovered skills', summary.discoveredSkills],
-    ['Hooks', summary.hooks],
-    ['Named subagents', summary.subagents],
-  ];
-  return rows.map(([label, value]) => `${String(label).padEnd(20)} ${chalk.cyan(String(value))}`).join('\n');
+  return [
+    `${chalk.bold('Harness')}      ${chalk.cyan(String(summary.builtinTools))} built-in · ${chalk.cyan(String(summary.mcpTools))} MCP tools`,
+    `${chalk.bold('Context')}      ${chalk.cyan(String(summary.configuredSkills + summary.discoveredSkills))} skills · ${chalk.cyan(String(summary.subagents))} Named subagents`,
+    `${chalk.bold('Automation')}   ${chalk.cyan(String(summary.mcpServers))} MCP servers · ${chalk.cyan(String(summary.hooks))} hooks`,
+    '',
+    chalk.dim('Use /mcp, /skills, /hooks, /agents, /tools, /doctor for details.'),
+  ].join('\n');
 }
 
 /** Restrained sigils for transcript line prefixes. Avoids emoji clutter. */

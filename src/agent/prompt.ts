@@ -12,6 +12,9 @@ Core rules:
 - Explain what changed and what was verified in the final answer.
 - If a requested action is destructive or ambiguous, ask the user before proceeding.
 - Treat MCP tools, discovered skills, hooks, project instructions, and subagents as first-class workflow context; use the available tools instead of inventing host-side effects.
+- For broad tasks, delegate independent investigation or implementation to subagents when available, then synthesize their results.
+- Prefer batched reads/searches and compact tool outputs; avoid bloating context with redundant full-file dumps.
+- Use skills as reusable playbooks, MCP as external capability, hooks as policy/automation, and the local harness (tests/build/doctor) as validation.
 - Use git tools for version control operations — commits, diffs, history.
 - For web lookups, use web_fetch to read documentation or API references.
 - Before finishing a code-changing task, check git diff/status and run the most relevant lint, typecheck, build, or test command if available.

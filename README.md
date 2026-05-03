@@ -249,6 +249,7 @@ Keyboard shortcuts:
 | --- | --- |
 | Enter | Send the current task (append `\` at end of line to continue on next line) |
 | Tab | Cycle through slash command completions |
+| Shift+Tab | Cycle Plan / Agent / YOLO mode |
 | ↑ / ↓ | Browse input history (persisted at `~/.mimo-code/history`) |
 | Ctrl+L | Clear the current message stream |
 | Ctrl+U | Clear the current input |
@@ -288,8 +289,10 @@ Slash commands:
 | `/export <path>` | Export the current session to JSON |
 | `/workflow` | Overview of MCP, skills, hooks, subagents, and local tool status |
 | `/timeline` | Show recent activity timeline for the current session |
-| `/mode [plan\|agent\|yolo]` | Switch interaction mode (sandbox adjusts automatically) |
+| `/mode [plan\|agent\|yolo]` | Open an interactive mode selector or switch mode |
+| `/model [name]` | Open an interactive model selector or switch model |
 | `/status` | Show runtime model, session, tools, and token status |
+| `/info` | Show model, token, context, tools, workflow, and cost details |
 | `/clear` | Clear visible messages |
 | `/exit` | Exit the TUI |
 
@@ -568,4 +571,3 @@ src/
   ui/         Ink TUI, slash commands, terminal output and formatting
   utils/      General utilities
 ```
-
