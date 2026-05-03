@@ -4,8 +4,9 @@ MiMo Code CLI is a terminal-based Coding Agent powered by Xiaomi's MiMo models. 
 
 ## Features
 
-- Full TUI and non-interactive modes: `mimo-code` / `mimo-code run "task"`.
+- Full TUI, Web UI, and non-interactive modes: `mimo-code` / `mimo-code webui` / `mimo-code run "task"`.
 - Claude Code–style borderless full-screen TUI: splash screen, message stream, tool calls, tool results, bottom input box, status bar, token usage, and keyboard shortcut hints.
+- Browser-based Web UI with the same agent, sessions, tools, hooks, skills, and approval flow — inspired by [opencode](https://github.com/anomalyco/opencode).
 - Approval UI for write-file, edit-file, and run-shell operations.
 - Built-in `/settings` wizard in the TUI — no need to leave the terminal.
 - Support for `/`-prefixed slash commands, Claude-style command selection, resumable sessions, MCP stdio tools, Skill loading, Hooks, and git worktrees.
@@ -221,6 +222,29 @@ From lowest to highest:
 4. CLI flags
 
 ## Usage
+
+### Web UI
+
+```bash
+mimo-code webui              # opens http://localhost:4280 in your browser
+mimo-code webui --port 4444  # custom port
+mimo-code webui --no-open    # do not auto-launch the browser
+mimo-code webui --mode plan  # start in Plan mode (read-only tools)
+```
+
+The Web UI is a self-contained, opencode-inspired chat interface that ships with `mimo-code`. It exposes the same Coding Agent, sessions, MCP tools, skills, hooks, sandbox, and approval flow as the TUI — through a clean browser experience instead of the terminal.
+
+Key capabilities:
+
+- **Three-pane layout**: sessions sidebar · message stream · composer with mode/sandbox toggles
+- **Streaming responses** via Server-Sent Events; thinking, tool calls, and tool results render live
+- **Tool call inspector**: collapsible cards with input + result, diff colouring, and status badges
+- **Approval dialog** for `write_file`, `edit_file`, `run_shell`, etc. (Approve once / Always / Deny)
+- **Mode switcher** (Plan / Agent / Yolo) and **sandbox switcher** (read-only / workspace-write / danger-full-access) per turn
+- **Session library**: sessions are persisted to `~/.mimo-code/sessions/` and shared with the TUI / `mimo-code session` CLI
+- **Live token + cost meters** in the top bar
+
+The backend is a tiny zero-dependency Node HTTP server bound to `127.0.0.1` by default; the frontend is plain HTML + CSS + ES modules with no build pipeline. Pass `--host 0.0.0.0` only if you intentionally want to expose the UI on your network.
 
 ### TUI Interactive Mode
 

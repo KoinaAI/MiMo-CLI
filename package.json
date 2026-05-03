@@ -14,8 +14,10 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node scripts/build-webui.mjs",
+    "build:webui": "node scripts/build-webui.mjs",
     "dev": "tsx src/cli.ts",
+    "dev:webui": "tsx src/cli.ts webui",
     "lint": "eslint . --max-warnings=0",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit"
