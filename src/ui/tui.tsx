@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Box, render, Text, useApp, useInput, useStdin } from 'ink';
+import { Box, render, Static, Text, useApp, useInput, useStdin } from 'ink';
 import Spinner from 'ink-spinner';
 import SelectInput from 'ink-select-input';
 import { MimoTextInput } from './text-input.js';
@@ -118,7 +118,6 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
   const [streamingText, setStreamingText] = useState('');
   const [streamingThinking, setStreamingThinking] = useState('');
   const [activeTool, setActiveTool] = useState<{ name: string; startedAt: number } | undefined>();
-  const [now, setNow] = useState<number>(() => Date.now());
   const [inputHistory, setInputHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [inputKey, setInputKey] = useState(0);
@@ -186,13 +185,7 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
     };
   }, [cwd]);
 
-  // Tick the wall clock every second so the verb-phase spinner ("Reading… 12s")
-  // stays accurate while a tool is in flight.
-  useEffect(() => {
-    if (!activeTool && !running) return;
-    const id = setInterval(() => setNow(Date.now()), 500);
-    return () => clearInterval(id);
-  }, [activeTool, running]);
+
 
   // Recompute @-mention completions whenever the prompt or caret moves.
   useEffect(() => {
@@ -238,29 +231,48 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
     }));
   }, []);
 
-  // Commit any buffered reasoning content as a single transcript entry. Called
-  // before any non-thinking event lands (assistant message, tool call, error,
-  // done, etc.) so that consecutive `assistant_thinking` deltas always render
-  // as one block instead of fragmented panels.
+  // We coalesce streaming/thinking deltas into a single React state update
+  // per ~32ms frame so the live region only re-renders ~30fps even if the
+  // model emits hundreds of tokens per second. Without this, every token
+  // would trigger Ink to repaint the input + status bars.
+  const streamingThrottleRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scheduleStreamingFlush = useCallback(() => {
+    if (streamingThrottleRef.current) return;
+    streamingThrottleRef.current = setTimeout(() => {
+      streamingThrottleRef.current = null;
+      setStreamingText(streamingBufferRef.current);
+      setStreamingThinking(thinkingBufferRef.current.peek());
+    }, 32);
+  }, []);
+  const cancelStreamingFlush = useCallback(() => {
+    if (streamingThrottleRef.current) {
+      clearTimeout(streamingThrottleRef.current);
+      streamingThrottleRef.current = null;
+    }
+  }, []);
+  useEffect(() => () => cancelStreamingFlush(), [cancelStreamingFlush]);
+
   const flushThinking = useCallback(() => {
     const text = thinkingBufferRef.current.flush();
+    cancelStreamingFlush();
     setStreamingThinking('');
     if (text) {
       append({ kind: 'thinking', title: 'thinking', body: formatReasoning(text) });
     }
-  }, [append]);
+  }, [append, cancelStreamingFlush]);
 
   const flushStreaming = useCallback(() => {
+    cancelStreamingFlush();
     streamingBufferRef.current = '';
     setStreamingText('');
-  }, []);
+  }, [cancelStreamingFlush]);
 
   const handleEvent = useCallback(
     (event: AgentEvent) => {
       if (event.type === 'thinking') return;
       if (event.type === 'assistant_thinking') {
         thinkingBufferRef.current.append(event.content);
-        setStreamingThinking(thinkingBufferRef.current.peek());
+        scheduleStreamingFlush();
         return;
       }
       if (event.type === 'streaming_delta') {
@@ -271,7 +283,7 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
           flushThinking();
         }
         streamingBufferRef.current += event.content;
-        setStreamingText(streamingBufferRef.current);
+        scheduleStreamingFlush();
         return;
       }
       if (event.type === 'assistant_message') {
@@ -385,7 +397,10 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
       if (command.name === 'keys') append({ kind: 'system', title: 'shortcuts', body: KEYBOARD_SHORTCUTS, timestamp: formatTimestamp() });
       if (command.name === 'exit') exitWithSessionId();
       if (command.name === 'clear') {
-        setMessages([{ id: Date.now(), kind: 'splash', title: '', body: SPLASH }]);
+        // Append a fresh splash + reset the divider tracker; we keep the
+        // <Static> log append-only (Codex-style) instead of trying to wipe
+        // scrollback. Users can still scroll back to see prior turns.
+        append({ kind: 'splash', title: '', body: SPLASH });
         messagesHasContentRef.current = false;
       }
       if (command.name === 'settings' || command.name === 'config') {
@@ -409,7 +424,7 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
       if (command.name === 'new') {
         const title = command.args.join(' ') || 'Untitled session';
         setSession(createSession(title, cwd));
-        setMessages([]);
+        append({ kind: 'splash', title: '', body: SPLASH });
         messagesHasContentRef.current = false;
         append({ kind: 'system', title: 'session', body: `Started new session: ${title}`, timestamp: formatTimestamp() });
       }
@@ -806,9 +821,9 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
       switchMode(order[(order.indexOf(mode) + 1) % order.length] ?? 'agent');
       return;
     }
-    // Ctrl+L: clear screen (== /clear).
+    // Ctrl+L: append a fresh splash to mark a clean break (== /clear).
     if (key.ctrl && input === 'l') {
-      setMessages([{ id: Date.now(), kind: 'splash', title: '', body: SPLASH }]);
+      append({ kind: 'splash', title: '', body: SPLASH });
       messagesHasContentRef.current = false;
       return;
     }
@@ -897,7 +912,6 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
   const selectedSlash = suggestions[slashIndex % suggestions.length];
   const inputHint = pendingLines.length > 0 ? ` (line ${pendingLines.length + 1})` : '';
   const verb = activeTool ? `${verbForTool(activeTool.name)} ${activeTool.name}…` : mode === 'plan' ? 'Analyzing…' : 'Thinking…';
-  const elapsed = activeTool ? formatDuration(now - activeTool.startedAt) : undefined;
   const inputLines = Math.max(1, prompt.split('\n').length);
   const handlePromptChange = useCallback(
     (value: string) => {
@@ -923,10 +937,14 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
 
   return (
     <Box flexDirection="column">
+      <Static items={messages}>
+        {(message) => (
+          <Box key={message.id} paddingX={1}>
+            <TranscriptEntry message={message} />
+          </Box>
+        )}
+      </Static>
       <Box flexDirection="column" paddingX={1}>
-        {messages.slice(-28).map((message) => (
-          <TranscriptEntry key={message.id} message={message} />
-        ))}
         {streamingThinking ? (
           <Box flexDirection="column" marginBottom={1}>
             <Text>
@@ -946,11 +964,7 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
           </Box>
         ) : null}
         {running && !approval && !streamingText && !streamingThinking ? (
-          <Text>
-            <Text color="cyan"><Spinner type="dots" /></Text>
-            <Text color="cyan"> {verb}</Text>
-            {elapsed ? <Text dimColor> · {elapsed}</Text> : null}
-          </Text>
+          <RunningIndicator verb={verb} startedAt={activeTool?.startedAt} />
         ) : null}
       </Box>
       {approval ? (
@@ -1098,10 +1112,13 @@ interface BottomStatusBarProps {
  * Row 1 carries the brand-led status line (mode, model, cwd, branch,
  * context utilization) that used to live above the transcript.
  * Row 2 lists runtime/workflow segments (max tokens, MCP, skills, sandbox
- * flags, repo path, git branch). Both rows stay dim so they remain
- * subordinate to the transcript above.
+ * flags) plus the most-used keyboard shortcuts. Both rows stay dim so they
+ * remain subordinate to the transcript above.
+ *
+ * The component is wrapped in `React.memo` so it doesn't re-render when
+ * unrelated parent state (prompt text, slash-popup index, etc.) changes.
  */
-function BottomStatusBar(props: BottomStatusBarProps): React.ReactElement {
+const BottomStatusBar = React.memo(function BottomStatusBar(props: BottomStatusBarProps): React.ReactElement {
   const { config, cwd, branch, alwaysApprove, dryRun, mcpToolCount, skillCount, mode, contextBar } = props;
   const segments: string[] = [`max ${config.maxTokens.toLocaleString()}`];
   if (mcpToolCount > 0) segments.push(`${mcpToolCount} MCP`);
@@ -1116,6 +1133,30 @@ function BottomStatusBar(props: BottomStatusBarProps): React.ReactElement {
       <Text>{topStatusLine(config, cwd, mode, branch, contextBar)}</Text>
       <Text dimColor>{segments.join(' · ')}</Text>
     </Box>
+  );
+});
+
+/**
+ * Live spinner + elapsed-time indicator shown while the agent is running.
+ *
+ * Owns its own clock so the parent `<TuiApp>` doesn't have to call
+ * `setState` every 500ms, which (combined with the `<Static>` transcript)
+ * is what keeps the rest of the screen still while the agent works.
+ */
+function RunningIndicator({ verb, startedAt }: { verb: string; startedAt: number | undefined }): React.ReactElement {
+  const [now, setNow] = useState<number>(() => Date.now());
+  useEffect(() => {
+    if (startedAt === undefined) return;
+    const id = setInterval(() => setNow(Date.now()), 500);
+    return () => clearInterval(id);
+  }, [startedAt]);
+  const elapsed = startedAt !== undefined ? formatDuration(now - startedAt) : undefined;
+  return (
+    <Text>
+      <Text color="cyan"><Spinner type="dots" /></Text>
+      <Text color="cyan"> {verb}</Text>
+      {elapsed ? <Text dimColor> · {elapsed}</Text> : null}
+    </Text>
   );
 }
 
