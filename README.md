@@ -2,6 +2,8 @@
 
 MiMo Code CLI is a terminal-based Coding Agent powered by Xiaomi's MiMo models. It can read code, search text, edit files, and run commands within your local workspace, calling the MiMo API via the Anthropic-compatible interface to complete software development tasks.
 
+<img width="1917" height="753" alt="image" src="https://github.com/user-attachments/assets/d665ae89-c523-4391-bf86-646372d0c844" />
+
 ## Features
 
 - Full TUI, Web UI, and non-interactive modes: `mimo-code` / `mimo-code webui` / `mimo-code run "task"`.
