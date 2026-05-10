@@ -97,17 +97,63 @@ Supported models:
 - `mimo-v2-omni`
 - `mimo-v2-flash`
 
-`mimo-v2-omni` and `mimo-v2.5` support multimodal input; the CLI's Coding Agent workflow focuses on text tasks and code tool calls.
+`mimo-v2.5` and `mimo-v2-omni` support multimodal input. In the TUI, attach image, video, or audio files by pasting/typing an `@path` reference (for example `@assets/screenshot.png`).
 
 Maximum output tokens are capped automatically per model:
 
 | Model | Max Output Tokens |
 | --- | ---: |
 | `mimo-v2.5-pro` | 131072 |
-| `mimo-v2.5` | 131072 |
+| `mimo-v2.5` | 32768 |
 | `mimo-v2-pro` | 131072 |
-| `mimo-v2-omni` | 131072 |
+| `mimo-v2-omni` | 32768 |
 | `mimo-v2-flash` | 65536 |
+
+Context defaults are selected by billing mode:
+
+- Token Plan: 1M context where supported.
+- Pay-as-you-go: 256K context.
+- `mimo-v2-omni` and `mimo-v2-flash` do not support 1M context.
+- Context is automatically compacted near the context limit using `mimo-v2.5`.
+
+### Billing
+
+Billing details are shown only from `/info` in the TUI.
+
+#### Pay-as-you-go pricing
+
+Cache writes are free.
+
+Domestic (`¥` / 1K tokens):
+
+| Model | ≤256K cache hit input | ≤256K cache miss input | ≤256K output | 256K–1M cache hit input | 256K–1M cache miss input | 256K–1M output |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `mimo-v2.5-pro`, `mimo-v2-pro` | ¥1.40 | ¥7.00 | ¥21.00 | ¥2.80 | ¥14.00 | ¥42.00 |
+| `mimo-v2.5` | ¥0.56 | ¥2.80 | ¥14.00 | ¥1.12 | ¥5.60 | ¥28.00 |
+| `mimo-v2-omni` | ¥0.56 | ¥2.80 | ¥14.00 | — | — | — |
+| `mimo-v2-flash` | ¥0.07 | ¥0.70 | ¥2.10 | — | — | — |
+
+International (`$` / 1K tokens):
+
+| Model | ≤256K cache hit input | ≤256K cache miss input | ≤256K output | 256K–1M cache hit input | 256K–1M cache miss input | 256K–1M output |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `mimo-v2.5-pro`, `mimo-v2-pro` | $0.20 | $1.00 | $3.00 | $0.40 | $2.00 | $6.00 |
+| `mimo-v2.5` | $0.08 | $0.40 | $2.00 | $0.16 | $0.80 | $4.00 |
+| `mimo-v2-omni` | $0.08 | $0.40 | $2.00 | — | — | — |
+| `mimo-v2-flash` | $0.01 | $0.10 | $0.30 | — | — | — |
+
+#### Token Plan credit consumption
+
+Token Plan is independent from pay-as-you-go pricing and does not support `mimo-v2-flash`.
+
+| Model | Credit multiplier |
+| --- | ---: |
+| `mimo-v2.5` | 1x |
+| `mimo-v2.5-pro` | 2x |
+| `mimo-v2-omni` | 1x |
+| `mimo-v2-pro` | 2x |
+
+Night discount: UTC 16:00–24:00 / Beijing 00:00–08:00 uses a 0.8x credit coefficient.
 
 List available models:
 
@@ -129,7 +175,7 @@ Or inside the TUI:
 /settings
 ```
 
-The TUI settings wizard covers: API Key, Base URL type, Token Plan region, custom Base URL, model, max output tokens, temperature, system prompt, MCP servers, skills, and hooks. Configuration is written to the user config file:
+The TUI settings wizard covers: API Key, Base URL type, Token Plan region, custom Base URL, model, temperature, system prompt, MCP servers, skills, and hooks. Maximum output tokens are fixed by model. Configuration is written to the user config file:
 
 ```text
 ~/.mimo-code/config.json
@@ -142,7 +188,6 @@ Example:
   "apiKey": "YOUR_MIMO_API_KEY",
   "baseUrl": "https://api.xiaomimimo.com",
   "model": "mimo-v2.5-pro",
-  "maxTokens": 4096,
   "temperature": 0,
   "mcpServers": [
     {
@@ -189,7 +234,7 @@ Supported environment variables:
 | `MIMO_API_KEY` | MiMo API Key — highest priority |
 | `MIMO_BASE_URL` | Base URL |
 | `MIMO_MODEL` | Default model |
-| `MIMO_MAX_TOKENS` | Maximum output token count |
+| `MIMO_MAX_TOKENS` | Legacy compatibility only; runtime output cap is fixed by model |
 | `MIMO_TEMPERATURE` | Sampling temperature |
 | `OPENAI_API_KEY` | Compatibility fallback |
 | `OPENAI_BASE_URL` | Compatibility fallback |

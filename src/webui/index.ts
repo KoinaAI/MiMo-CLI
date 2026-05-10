@@ -21,7 +21,6 @@ export interface LaunchWebUIOptions {
   model?: string | undefined;
   baseUrl?: string | undefined;
   tokenPlanRegion?: string | undefined;
-  maxTokens?: number | undefined;
   temperature?: number | undefined;
   staticDir?: string | undefined;
 }
@@ -31,7 +30,6 @@ export async function launchWebUI(opts: LaunchWebUIOptions): Promise<WebUIServer
   if (opts.model) overrides.model = opts.model;
   if (opts.baseUrl) overrides.baseUrl = opts.baseUrl;
   if (opts.tokenPlanRegion) overrides.baseUrl = tokenPlanBaseUrl(opts.tokenPlanRegion);
-  if (opts.maxTokens !== undefined) overrides.maxTokens = opts.maxTokens;
   if (opts.temperature !== undefined) overrides.temperature = opts.temperature;
 
   const config = await loadConfig(opts.cwd, overrides);

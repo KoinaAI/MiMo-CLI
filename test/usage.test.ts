@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mergeUsage, formatUsage, estimateCost, formatCost, formatContextUsage } from '../src/agent/usage.js';
+import { mergeUsage, formatUsage, estimateCost, formatCost, formatContextUsage, isNightDiscountWindow } from '../src/agent/usage.js';
 
 describe('token usage utilities', () => {
   it('merges usage objects', () => {
@@ -34,7 +34,7 @@ describe('cost estimation', () => {
     const cost = estimateCost('mimo-v2.5-pro', { inputTokens: 1000, outputTokens: 1000 });
     expect(cost).toBeDefined();
     expect(cost!.totalCost).toBeGreaterThan(0);
-    expect(cost!.currency).toBe('USD');
+    expect(cost!.currency).toBe('CNY');
   });
 
   it('returns undefined for unknown model', () => {
@@ -45,7 +45,25 @@ describe('cost estimation', () => {
   it('formats cost string', () => {
     const cost = estimateCost('mimo-v2.5-pro', { inputTokens: 1000, outputTokens: 1000 });
     const formatted = formatCost(cost);
-    expect(formatted).toContain('$');
+    expect(formatted).toContain('¥');
+  });
+
+  it('estimates international paygo pricing for custom endpoints', () => {
+    const cost = estimateCost('mimo-v2.5-pro', { inputTokens: 1000, outputTokens: 1000 }, 'paygo', 'https://example.test');
+    expect(cost?.currency).toBe('USD');
+    expect(formatCost(cost)).toContain('$');
+  });
+
+  it('estimates token plan credit consumption with night discount', () => {
+    const cost = estimateCost('mimo-v2.5-pro', { inputTokens: 1000, outputTokens: 1000 }, 'token_plan', 'https://token-plan-cn.xiaomimimo.com', 1_000_000, new Date('2026-01-01T16:00:00Z'));
+    expect(cost?.currency).toBe('CREDITS');
+    expect(cost?.creditsConsumed).toBe(3200);
+    expect(formatCost(cost)).toContain('credits');
+  });
+
+  it('detects night discount window', () => {
+    expect(isNightDiscountWindow(new Date('2026-01-01T16:00:00Z'))).toBe(true);
+    expect(isNightDiscountWindow(new Date('2026-01-01T15:59:59Z'))).toBe(false);
   });
 
   it('formats undefined cost', () => {
@@ -75,4 +93,3 @@ describe('context usage display', () => {
     expect(() => formatContextUsage(0, 0)).not.toThrow();
   });
 });
-

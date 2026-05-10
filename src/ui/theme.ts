@@ -1,5 +1,4 @@
 import chalk from 'chalk';
-import { formatUsage, formatCost } from '../agent/usage.js';
 import type { CostEstimate, InteractionMode, RuntimeConfig, SessionRecord, ToolDefinition, TokenUsage } from '../types.js';
 
 /**
@@ -26,7 +25,7 @@ export const SPLASH = [
   '',
   ...SPLASH_LOGO.map((line) => chalk.cyan(line)),
   '',
-  `  ${chalk.bold('Welcome to MiMo Code')} ${chalk.dim('· Intelligent Coding Agent · v0.1.0')}`,
+  `  ${chalk.bold('Welcome to MiMo Code')} ${chalk.dim('· Intelligent Coding Agent · v0.2.0')}`,
   '',
   `  ${chalk.dim('/help')} ${chalk.dim('for commands')} ${chalk.dim('·')} ${chalk.dim('/settings')} ${chalk.dim('for config')} ${chalk.dim('·')} ${chalk.dim('Shift+Tab')} ${chalk.dim('switches mode')}`,
   `  ${chalk.dim('@')} ${chalk.dim('to mention files')} ${chalk.dim('·')} ${chalk.dim('/')} ${chalk.dim('to run a command')} ${chalk.dim('·')} ${chalk.dim('/keys')} ${chalk.dim('for shortcuts')}`,
@@ -50,21 +49,20 @@ export function statusLine(
   mode: InteractionMode = 'agent',
   cost?: CostEstimate,
 ): string {
+  void usage;
+  void cost;
   const parts = [
     MODE_LABELS[mode],
     chalk.yellow(config.model),
+    chalk.gray(config.billingMode === 'token_plan' ? 'Token Plan' : 'Paygo'),
     chalk.gray('anthropic'),
-    chalk.gray(`max ${config.maxTokens}`),
     chalk.cyan(`${tools.length} tools`),
     chalk.magenta(`MCP ${config.mcpServers?.filter((server) => server.enabled !== false).length ?? 0}`),
     chalk.blue(`Skills ${config.skills?.filter((skill) => skill.enabled !== false).length ?? 0}`),
     chalk.gray(`Hooks ${config.hooks?.filter((hook) => hook.enabled !== false).length ?? 0}`),
     chalk.gray(`session ${session.id.slice(0, 8)}`),
   ];
-  const costStr = formatCost(cost);
-  if (costStr) parts.push(chalk.green(costStr));
   parts.push(chalk.gray(shortenPath(cwd)));
-  parts.push(chalk.gray(formatUsage(usage)));
   return parts.join(SEP);
 }
 

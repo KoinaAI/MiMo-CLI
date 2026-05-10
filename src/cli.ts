@@ -6,7 +6,7 @@ import { runConsoleAgent } from './agent/console-runner.js';
 import { createSubAgentTool } from './agent/subagent.js';
 import { createNamedSubagentTool, discoverNamedSubagents } from './agent/named-subagents.js';
 import { configureInteractively } from './config/interactive.js';
-import { DEFAULT_MAX_TOKENS, DEFAULT_TEMPERATURE, SUPPORTED_MODELS } from './constants.js';
+import { DEFAULT_TEMPERATURE, SUPPORTED_MODELS } from './constants.js';
 import { envToConfig, loadConfig, projectConfigPath, readPersistedConfig, tokenPlanBaseUrl, userConfigPath } from './config/config.js';
 import { describeHookConfig, runHooks } from './hooks.js';
 import { createMcpTools } from './mcp/stdio.js';
@@ -21,12 +21,11 @@ const program = new Command();
 program
   .name('mimo-code')
   .description('Terminal coding agent powered by Xiaomi MiMo models')
-  .version('0.1.0')
+  .version('0.2.0')
   .option('-C, --cwd <path>', 'workspace directory', process.cwd())
   .option('--model <model>', `model (${SUPPORTED_MODELS.join(', ')})`)
   .option('--base-url <url>', 'MiMo base URL')
   .option('--token-plan-region <region>', 'Token Plan region: cn, sgp, ams')
-  .option('--max-tokens <number>', `max output tokens (default ${DEFAULT_MAX_TOKENS})`)
   .option('--temperature <number>', `sampling temperature (default ${DEFAULT_TEMPERATURE})`)
   .option('--dry-run', 'show writes and commands without changing files', false)
   .option('-y, --yes', 'auto-approve tool calls where possible', false)
@@ -47,7 +46,6 @@ program
   .option('--model <model>', `model (${SUPPORTED_MODELS.join(', ')})`)
   .option('--base-url <url>', 'MiMo base URL')
   .option('--token-plan-region <region>', 'Token Plan region: cn, sgp, ams')
-  .option('--max-tokens <number>', `max output tokens (default ${DEFAULT_MAX_TOKENS})`)
   .option('--temperature <number>', `sampling temperature (default ${DEFAULT_TEMPERATURE})`)
   .option('--dry-run', 'show writes and commands without changing files', false)
   .option('-y, --yes', 'auto-approve tool calls where possible', false)
@@ -253,7 +251,6 @@ program
   .option('--model <model>', `model (${SUPPORTED_MODELS.join(', ')})`)
   .option('--base-url <url>', 'MiMo base URL')
   .option('--token-plan-region <region>', 'Token Plan region: cn, sgp, ams')
-  .option('--max-tokens <number>', `max output tokens (default ${DEFAULT_MAX_TOKENS})`)
   .option('--temperature <number>', `sampling temperature (default ${DEFAULT_TEMPERATURE})`)
   .option('--mode <mode>', 'interaction mode: plan, agent, or yolo (default agent)')
   .option('--sandbox <level>', 'sandbox level: read-only, workspace-write, or danger-full-access')
@@ -282,9 +279,6 @@ program
         model: options.model,
         baseUrl: options.baseUrl,
         tokenPlanRegion: options.tokenPlanRegion,
-        maxTokens: options.maxTokens
-          ? parsePositiveInteger(options.maxTokens, '--max-tokens')
-          : undefined,
         temperature: options.temperature !== undefined
           ? parseNonNegativeNumber(options.temperature, '--temperature')
           : undefined,
@@ -386,7 +380,6 @@ function parseOverrides(options: CliOptions): PersistedConfig {
   if (options.model) overrides.model = options.model;
   if (options.baseUrl) overrides.baseUrl = options.baseUrl;
   if (options.tokenPlanRegion) overrides.baseUrl = tokenPlanBaseUrl(options.tokenPlanRegion);
-  if (options.maxTokens) overrides.maxTokens = parsePositiveInteger(options.maxTokens, '--max-tokens');
   if (options.temperature) overrides.temperature = parseNonNegativeNumber(options.temperature, '--temperature');
   return overrides;
 }
@@ -463,7 +456,6 @@ interface CliOptions {
   model?: string;
   baseUrl?: string;
   tokenPlanRegion?: string;
-  maxTokens?: string;
   temperature?: string;
   dryRun?: boolean;
   yes?: boolean;

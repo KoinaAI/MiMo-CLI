@@ -1,4 +1,6 @@
 import { MiMoClient } from '../api/client.js';
+import { COMPACTION_MODEL, COMPACTION_THRESHOLD } from '../constants.js';
+import { compactMessages, estimateMessagesTokens } from '../context/compaction.js';
 import { discoverProjectContext, buildProjectContextPrompt } from '../context/project.js';
 import { runHooks, wasCancelled, type HookRunResult } from '../hooks.js';
 import { defaultSandboxForMode, isToolAllowed } from '../policy/sandbox.js';
@@ -48,7 +50,7 @@ export class CodingAgent {
     return this.tools;
   }
 
-  async run(task: string, callbacks: AgentRunCallbacks = {}, history: ChatMessage[] = []): Promise<AgentResult> {
+  async run(task: string, callbacks: AgentRunCallbacks = {}, history: ChatMessage[] = [], userContent: ChatMessage['content'] = task): Promise<AgentResult> {
     const sessionId = crypto.randomUUID().slice(0, 8);
     void logSessionEvent(sessionId, 'session_start', `task: ${task.slice(0, 200)}`);
 
@@ -73,19 +75,20 @@ export class CodingAgent {
       { role: 'system', content: systemPrompt },
       ...contextMessages(this.config, skillContext, projectContextPrompt),
       ...history,
-      { role: 'user', content: task },
+      { role: 'user', content: userContent },
     ];
     let finalMessage = '';
     let usage: TokenUsage = {};
 
     for (let iteration = 1; iteration <= this.options.maxIterations; iteration += 1) {
       if (callbacks.signal?.aborted) {
-        const result = interruptedResult(this.config.model, usage, iteration);
+        const result = interruptedResult(this.config, usage, iteration);
         emitHookResults(callbacks, await runHooks(this.config.hooks, 'stop', { cwd: this.options.cwd, prompt: task, reason: 'aborted' }));
         emit(callbacks, { type: 'done', result });
         return result;
       }
       emit(callbacks, { type: 'thinking', iteration, maxIterations: this.options.maxIterations });
+      maybeCompactMessages(messages, this.config, callbacks);
 
       let streamedThinking = false;
       const response = await this.client.completeStreaming(messages, activeTools, {
@@ -111,7 +114,7 @@ export class CodingAgent {
       }
 
       if (response.toolCalls.length === 0) {
-        const cost = estimateCost(this.config.model, usage);
+        const cost = estimateCost(this.config.model, usage, this.config.billingMode, this.config.baseUrl, this.config.contextLimit);
         const result = { finalMessage, iterations: iteration, usage, cost };
         await runHooks(this.config.hooks, 'agent_done', { cwd: this.options.cwd, prompt: task, finalMessage: result.finalMessage });
         emit(callbacks, { type: 'done', result });
@@ -127,7 +130,7 @@ export class CodingAgent {
 
       for (const toolCall of response.toolCalls) {
         if (callbacks.signal?.aborted) {
-          const result = interruptedResult(this.config.model, usage, iteration);
+          const result = interruptedResult(this.config, usage, iteration);
           emitHookResults(callbacks, await runHooks(this.config.hooks, 'stop', { cwd: this.options.cwd, prompt: task, reason: 'aborted' }));
           emit(callbacks, { type: 'done', result });
           return result;
@@ -190,7 +193,7 @@ export class CodingAgent {
     }
 
     const message = `Stopped after ${this.options.maxIterations} iterations. Ask a more focused question or increase --max-iterations.`;
-    const cost = estimateCost(this.config.model, usage);
+    const cost = estimateCost(this.config.model, usage, this.config.billingMode, this.config.baseUrl, this.config.contextLimit);
     const result = { finalMessage: finalMessage || message, iterations: this.options.maxIterations, usage, cost };
     await runHooks(this.config.hooks, 'agent_done', { cwd: this.options.cwd, prompt: task, finalMessage: result.finalMessage });
     emit(callbacks, { type: 'done', result });
@@ -235,13 +238,26 @@ function emit(callbacks: AgentRunCallbacks, event: AgentEvent): void {
   callbacks.onEvent?.(event);
 }
 
-function interruptedResult(model: string, usage: TokenUsage, iteration: number): AgentResult {
+function interruptedResult(config: RuntimeConfig, usage: TokenUsage, iteration: number): AgentResult {
   return {
     finalMessage: 'Interrupted by user.',
     iterations: iteration,
     usage,
-    cost: estimateCost(model, usage),
+    cost: estimateCost(config.model, usage, config.billingMode, config.baseUrl, config.contextLimit),
   };
+}
+
+function maybeCompactMessages(messages: ChatMessage[], config: RuntimeConfig, callbacks: AgentRunCallbacks): void {
+  const estimated = estimateMessagesTokens(messages);
+  if (estimated < Math.floor(config.contextLimit * COMPACTION_THRESHOLD)) return;
+  const before = messages.length;
+  const compacted = compactMessages(messages);
+  if (compacted.length >= messages.length) return;
+  messages.splice(0, messages.length, ...compacted);
+  emit(callbacks, {
+    type: 'workflow_status',
+    message: `Auto-compacted context with ${COMPACTION_MODEL}: ${before} → ${messages.length} messages (${estimated.toLocaleString()} tokens)`,
+  });
 }
 
 function emitHookResults(callbacks: AgentRunCallbacks, results: HookRunResult[]): void {

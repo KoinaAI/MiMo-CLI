@@ -1,6 +1,6 @@
 {
   "name": "mimo-code-cli",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "MiMo Code CLI is a terminal coding agent powered by Xiaomi MiMo models.",
   "license": "GPL-2.0-only",
   "type": "module",

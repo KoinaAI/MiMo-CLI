@@ -2,8 +2,8 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import {
+  CONTEXT_LIMIT_PAYGO,
   DEFAULT_BASE_URL,
-  DEFAULT_MAX_TOKENS,
   DEFAULT_MODEL,
   DEFAULT_TEMPERATURE,
   MODEL_MAX_OUTPUT_TOKENS,
@@ -14,6 +14,7 @@ import {
   USER_CONFIG_FILE,
 } from '../constants.js';
 import type { HookEvent, PersistedConfig, RuntimeConfig } from '../types.js';
+import { calculateContextDefault, detectBillingMode, isTokenPlanSupported } from '../agent/usage.js';
 import { MiMoCliError } from '../utils/errors.js';
 import { isRecord, optionalNumber, optionalString } from '../utils/json.js';
 
@@ -69,15 +70,23 @@ export async function loadConfig(cwd: string, overrides: PersistedConfig = {}): 
     );
   }
 
+  const baseUrl = stripTrailingSlash(merged.baseUrl ?? DEFAULT_BASE_URL);
   const model = merged.model ?? DEFAULT_MODEL;
-  const maxTokens = clampMaxTokens(model, merged.maxTokens ?? DEFAULT_MAX_TOKENS);
+  const billingMode = detectBillingMode(baseUrl);
+  if (billingMode === 'token_plan' && !isTokenPlanSupported(model)) {
+    throw new MiMoCliError(`Model ${model} is not supported by Token Plan. Choose mimo-v2.5-pro, mimo-v2.5, mimo-v2-pro, or mimo-v2-omni.`);
+  }
+  const maxTokens = maxOutputTokensForModel(model);
+  const contextLimit = calculateContextDefault(billingMode, model);
 
   return {
     apiKey,
-    baseUrl: stripTrailingSlash(merged.baseUrl ?? DEFAULT_BASE_URL),
+    baseUrl,
     model,
     format: 'anthropic',
     maxTokens,
+    contextLimit,
+    billingMode,
     temperature: merged.temperature ?? DEFAULT_TEMPERATURE,
     ...(merged.systemPrompt ? { systemPrompt: merged.systemPrompt } : {}),
     ...(merged.mcpServers ? { mcpServers: merged.mcpServers } : {}),
@@ -132,11 +141,15 @@ export function maxOutputTokensForModel(model: string): number {
   if (SUPPORTED_MODELS.includes(model as (typeof SUPPORTED_MODELS)[number])) {
     return MODEL_MAX_OUTPUT_TOKENS[model as keyof typeof MODEL_MAX_OUTPUT_TOKENS];
   }
-  return 131_072;
+  return MODEL_MAX_OUTPUT_TOKENS[DEFAULT_MODEL];
 }
 
 export function clampMaxTokens(model: string, maxTokens: number): number {
   return Math.min(Math.max(1, Math.floor(maxTokens)), maxOutputTokensForModel(model));
+}
+
+export function contextLimitForModel(model: string, billingMode: RuntimeConfig['billingMode'] = 'paygo'): number {
+  return calculateContextDefault(billingMode, model) || CONTEXT_LIMIT_PAYGO;
 }
 
 function stripTrailingSlash(value: string): string {

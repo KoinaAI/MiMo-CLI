@@ -1,4 +1,4 @@
-import type { AssistantResponse, ChatMessage, RuntimeConfig, ToolCall, ToolDefinition, TokenUsage } from '../types.js';
+import type { AssistantResponse, ChatContent, ChatMessage, RuntimeConfig, ToolCall, ToolDefinition, TokenUsage } from '../types.js';
 import { MiMoCliError } from '../utils/errors.js';
 import { isRecord } from '../utils/json.js';
 import { toAnthropicTools } from './tools.js';
@@ -182,9 +182,10 @@ function buildAnthropicPayload(
   if (baseSystem) systemParts.push(baseSystem);
   for (const message of messages) {
     if (message.role !== 'system') continue;
-    if (!message.content) continue;
-    if (systemParts.includes(message.content)) continue;
-    systemParts.push(message.content);
+    const text = contentText(message.content);
+    if (!text) continue;
+    if (systemParts.includes(text)) continue;
+    systemParts.push(text);
   }
   return {
     system: systemParts.length > 0 ? systemParts.join('\n\n') : undefined,
@@ -203,7 +204,7 @@ function toAnthropicMessages(messages: ChatMessage[]): Record<string, unknown>[]
           {
             type: 'tool_result',
             tool_use_id: message.toolCallId,
-            content: message.content,
+            content: contentText(message.content),
           },
         ],
       });
@@ -214,8 +215,9 @@ function toAnthropicMessages(messages: ChatMessage[]): Record<string, unknown>[]
       if (message.thinking) {
         blocks.push({ type: 'thinking', thinking: message.thinking });
       }
-      if (message.content) {
-        blocks.push({ type: 'text', text: message.content });
+      const text = contentText(message.content);
+      if (text) {
+        blocks.push({ type: 'text', text });
       }
       blocks.push(
         ...message.toolCalls.map((toolCall) => ({
@@ -228,9 +230,31 @@ function toAnthropicMessages(messages: ChatMessage[]): Record<string, unknown>[]
       output.push({ role: 'assistant', content: blocks });
       continue;
     }
-    output.push({ role: message.role === 'assistant' ? 'assistant' : 'user', content: message.content });
+    output.push({ role: message.role === 'assistant' ? 'assistant' : 'user', content: toAnthropicContent(message.content) });
   }
   return output;
+}
+
+function toAnthropicContent(content: ChatContent): string | Record<string, unknown>[] {
+  if (typeof content === 'string') return content;
+  return content.map((block) => {
+    if (block.type === 'text') return { type: 'text', text: block.text };
+    return {
+      type: block.type,
+      source: {
+        type: 'base64',
+        media_type: block.mediaType,
+        data: block.data,
+      },
+    };
+  });
+}
+
+function contentText(content: ChatContent): string {
+  if (typeof content === 'string') return content;
+  return content
+    .map((block) => block.type === 'text' ? block.text : `[${block.type}: ${block.name ?? block.mediaType}]`)
+    .join('\n');
 }
 
 function parseAnthropicMessage(json: Record<string, unknown>): AssistantResponse {

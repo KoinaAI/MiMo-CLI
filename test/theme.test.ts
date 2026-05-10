@@ -7,7 +7,9 @@ const config: RuntimeConfig = {
   baseUrl: 'https://api.xiaomimimo.com',
   model: 'mimo-v2.5-pro',
   format: 'anthropic',
-  maxTokens: 4096,
+  maxTokens: 131_072,
+  contextLimit: 256_000,
+  billingMode: 'paygo',
   temperature: 0,
 };
 
@@ -41,10 +43,11 @@ describe('theme', () => {
     expect(line).toContain('mimo-v2.5-pro');
   });
 
-  it('statusLine with mode and cost', () => {
+  it('statusLine with mode hides cost', () => {
     const cost = { inputCost: 0.001, outputCost: 0.005, totalCost: 0.006, currency: 'USD' };
     const line = statusLine(config, session, tools, {}, '/tmp', 'yolo', cost);
-    expect(line).toContain('$');
+    expect(line).toContain('YOLO');
+    expect(line).not.toContain('$');
   });
 
   it('formatThinkingBlock wraps thinking lines', () => {

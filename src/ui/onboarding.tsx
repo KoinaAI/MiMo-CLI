@@ -4,10 +4,10 @@ import SelectInput from 'ink-select-input';
 import chalk from 'chalk';
 import {
   DEFAULT_BASE_URL,
-  DEFAULT_MAX_TOKENS,
   DEFAULT_MODEL,
   DEFAULT_TEMPERATURE,
-  SUPPORTED_MODELS,
+  MODEL_DESCRIPTIONS,
+  MODEL_TIERS,
   TOKEN_PLAN_REGIONS,
 } from '../constants.js';
 import { envToConfig, projectConfigPath, readPersistedConfig, tokenPlanBaseUrl, userConfigPath, writeUserConfig } from '../config/config.js';
@@ -48,7 +48,9 @@ const REGION_ITEMS = TOKEN_PLAN_REGIONS.map((region) => {
   return { label: labels[region] ?? region, value: region };
 });
 
-const MODEL_ITEMS = SUPPORTED_MODELS.map((model) => ({ label: model, value: model }));
+const MODEL_ITEMS = MODEL_TIERS.flatMap(({ tier, models }) =>
+  models.map((model) => ({ label: `[${tier}] ${model.padEnd(16)} ${chalk.dim(MODEL_DESCRIPTIONS[model])}`, value: model })),
+);
 
 interface OnboardingAppProps {
   onComplete(result: OnboardingResult): void;
@@ -134,8 +136,6 @@ function OnboardingApp({ onComplete, existing, existingApiKey }: OnboardingAppPr
     }
   });
 
-  const maxTokens = existing.maxTokens ?? DEFAULT_MAX_TOKENS;
-
   return (
     <Box flexDirection="column" paddingX={2} paddingY={1}>
       {/* Logo — always visible */}
@@ -197,7 +197,6 @@ function OnboardingApp({ onComplete, existing, existingApiKey }: OnboardingAppPr
           apiKey={apiKey}
           baseUrl={baseUrl}
           model={model}
-          maxTokens={maxTokens}
         />
       )}
 
@@ -226,7 +225,7 @@ function WelcomeStep(): React.ReactElement {
   return (
     <Box flexDirection="column">
       <Text bold>  Welcome to MiMo Code</Text>
-      <Text dimColor>  Intelligent Coding Agent · v0.1.0</Text>
+      <Text dimColor>  Intelligent Coding Agent · v0.2.0</Text>
       <Text> </Text>
       <Text>  Before you start, let's configure your API connection.</Text>
       <Text dimColor>  MiMo Code uses the Anthropic-compatible API format.</Text>
@@ -368,12 +367,10 @@ function ReviewStep({
   apiKey,
   baseUrl,
   model,
-  maxTokens,
 }: {
   apiKey: string;
   baseUrl: string;
   model: string;
-  maxTokens: number;
 }): React.ReactElement {
   return (
     <Box flexDirection="column">
@@ -382,7 +379,7 @@ function ReviewStep({
       <Text>  Base URL:  <Text color="cyan">{baseUrl}</Text></Text>
       <Text>  API Key:   <Text color="yellow">{maskApiKey(apiKey)}</Text></Text>
       <Text>  Model:     <Text color="cyan">{model}</Text></Text>
-      <Text>  Max tokens:<Text color="cyan"> {maxTokens}</Text></Text>
+      <Text>  Output:    <Text dimColor>Fixed by selected model</Text></Text>
       <Text>  Format:    <Text dimColor>Anthropic (/anthropic/v1/messages)</Text></Text>
       <Text> </Text>
       <Text dimColor>  Settings will be saved to ~/.mimo-code/config.json</Text>
@@ -429,6 +426,7 @@ export async function runOnboarding(): Promise<PersistedConfig | undefined> {
             model: result.model,
             temperature: DEFAULT_TEMPERATURE,
           };
+          delete config.maxTokens;
           await writeUserConfig(config);
           instance.unmount();
           resolve(config);
