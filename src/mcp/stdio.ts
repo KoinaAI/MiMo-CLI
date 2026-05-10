@@ -84,7 +84,7 @@ export class McpStdioClient {
     await this.request('initialize', {
       protocolVersion: '2024-11-05',
       capabilities: {},
-      clientInfo: { name: 'mimo-code-cli', version: '0.1.0' },
+      clientInfo: { name: 'mimo-code-cli', version: '0.2.0' },
     });
     this.notify('notifications/initialized', {});
   }

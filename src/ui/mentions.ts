@@ -1,5 +1,6 @@
 import { readdir } from 'node:fs/promises';
 import path from 'node:path';
+import { isMediaPath } from './media.js';
 
 /**
  * "@-mention" completion for the input line, à la Codex / Claude Code.
@@ -146,6 +147,7 @@ export async function expandMentions(prompt: string, readFile: (rel: string) => 
     const rel = match[2] ?? '';
     if (!rel) continue;
     if (rel.endsWith('/')) continue;
+    if (isMediaPath(rel)) continue;
     try {
       const content = await readFile(rel);
       const truncated = content.length > 4096 ? `${content.slice(0, 4096)}\n... [truncated]` : content;

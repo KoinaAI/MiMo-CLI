@@ -7,7 +7,7 @@ export function estimateTokenCount(text: string): number {
 }
 
 export function estimateMessagesTokens(messages: ChatMessage[]): number {
-  return messages.reduce((total, message) => total + estimateTokenCount(message.content || '') + 4, 0);
+  return messages.reduce((total, message) => total + estimateTokenCount(messageContentText(message.content)) + 4, 0);
 }
 
 export function compactMessages(messages: ChatMessage[], keepLast: number = 4): ChatMessage[] {
@@ -36,7 +36,7 @@ function summarizeMessages(messages: ChatMessage[]): string {
 
   for (const message of messages) {
     if (message.role === 'user') {
-      const snippet = message.content.slice(0, 100);
+      const snippet = messageContentText(message.content).slice(0, 100);
       topics.add(snippet);
     }
     if (message.role === 'assistant' && message.toolCalls) {
@@ -82,4 +82,11 @@ export function formatTokenUsageDetails(usage: TokenUsage): string {
   if (usage.cacheReadInputTokens !== undefined) lines.push(`Cache Read:   ${usage.cacheReadInputTokens.toLocaleString()}`);
   if (usage.cacheCreationInputTokens !== undefined) lines.push(`Cache Write:  ${usage.cacheCreationInputTokens.toLocaleString()}`);
   return lines.join('\n');
+}
+
+export function messageContentText(content: ChatMessage['content']): string {
+  if (typeof content === 'string') return content;
+  return content
+    .map((block) => block.type === 'text' ? block.text : `[${block.type}: ${block.name ?? block.mediaType}]`)
+    .join('\n');
 }

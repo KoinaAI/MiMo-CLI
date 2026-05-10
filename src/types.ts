@@ -2,9 +2,15 @@ export type ApiFormat = 'anthropic';
 
 export type MessageRole = 'system' | 'user' | 'assistant' | 'tool';
 
+export type ChatContent = string | ChatContentBlock[];
+
+export type ChatContentBlock =
+  | { type: 'text'; text: string }
+  | { type: 'image' | 'video' | 'audio'; mediaType: string; data: string; name?: string };
+
 export interface ChatMessage {
   role: MessageRole;
-  content: string;
+  content: ChatContent;
   name?: string;
   toolCallId?: string;
   toolCalls?: ToolCall[];
@@ -33,6 +39,8 @@ export interface TokenUsage {
 
 export type InteractionMode = 'plan' | 'agent' | 'yolo';
 
+export type BillingMode = 'paygo' | 'token_plan';
+
 export interface RuntimeConfig {
   apiKey: string;
   baseUrl: string;
@@ -40,6 +48,8 @@ export interface RuntimeConfig {
   format: ApiFormat;
   maxTokens: number;
   temperature: number;
+  contextLimit: number;
+  billingMode: BillingMode;
   systemPrompt?: string;
   mcpServers?: McpServerConfig[];
   skills?: SkillConfig[];
@@ -81,6 +91,10 @@ export interface CostEstimate {
   outputCost: number;
   totalCost: number;
   currency: string;
+  /** Token Plan only: credits consumed this session. */
+  creditsConsumed?: number;
+  /** Brief detail string for /info display. */
+  detail?: string;
 }
 
 export interface ToolContext {
@@ -162,18 +176,10 @@ export interface HookConfig {
   args?: string[];
   env?: Record<string, string>;
   enabled?: boolean;
-  /**
-   * Optional matcher: if set, only run when payload.toolName matches.
-   * Used by tool-scoped hooks (e.g. only run on `run_shell`).
-   */
   matcher?: string;
-  /** Per-hook timeout in ms. Defaults to 30s. */
   timeoutMs?: number;
-  /** Optional comma-separated or array allow-list of tool names/globs. */
   allowTools?: string[];
-  /** Optional comma-separated or array deny-list of tool names/globs. */
   blockTools?: string[];
-  /** Continue running later hooks after a hook cancels. Defaults to false. */
   continueOnCancel?: boolean;
 }
 
@@ -185,7 +191,6 @@ export interface HookPayload {
   toolOutput?: string;
   finalMessage?: string;
   notification?: string;
-  /** Set by the host when the agent loop is stopping. */
   reason?: string;
 }
 

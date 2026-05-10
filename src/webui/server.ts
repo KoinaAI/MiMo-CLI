@@ -171,7 +171,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse, ctx: Ser
 function buildServerInfo(ctx: ServerContext): ServerInfo {
   const sandbox = ctx.options.sandbox ?? defaultSandboxForMode(ctx.options.mode);
   return {
-    version: '0.1.0',
+    version: '0.2.0',
     cwd: ctx.options.cwd,
     model: ctx.config.model,
     baseUrl: ctx.config.baseUrl,

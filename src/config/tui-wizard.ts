@@ -1,4 +1,4 @@
-import { DEFAULT_BASE_URL, DEFAULT_MODEL, DEFAULT_TEMPERATURE, SUPPORTED_MODELS } from '../constants.js';
+import { DEFAULT_BASE_URL, DEFAULT_MODEL, DEFAULT_TEMPERATURE, MODEL_DESCRIPTIONS, SUPPORTED_MODELS } from '../constants.js';
 import type { HookEvent, McpServerConfig, PersistedConfig, SkillConfig } from '../types.js';
 import { readPersistedConfig, tokenPlanBaseUrl, userConfigPath, writeUserConfig } from './config.js';
 
@@ -8,7 +8,6 @@ export type ConfigWizardStep =
   | 'tokenRegion'
   | 'customBaseUrl'
   | 'model'
-  | 'maxTokens'
   | 'temperature'
   | 'systemPrompt'
   | 'mcpServers'
@@ -31,7 +30,6 @@ export async function createConfigWizardState(): Promise<ConfigWizardState> {
     model: existing.model ?? DEFAULT_MODEL,
     temperature: existing.temperature ?? DEFAULT_TEMPERATURE,
   };
-  if (existing.maxTokens !== undefined) draft.maxTokens = existing.maxTokens;
   if (existing.systemPrompt) draft.systemPrompt = existing.systemPrompt;
   if (existing.mcpServers) draft.mcpServers = existing.mcpServers;
   if (existing.skills) draft.skills = existing.skills;
@@ -54,9 +52,7 @@ export function wizardPrompt(state: ConfigWizardState): string {
     case 'customBaseUrl':
       return 'Custom base URL';
     case 'model':
-      return `Model：${SUPPORTED_MODELS.join(' / ')}`;
-    case 'maxTokens':
-      return 'Max output tokens (leave blank for auto)';
+      return `Model：${SUPPORTED_MODELS.map((model) => `${model} (${MODEL_DESCRIPTIONS[model]})`).join(' / ')}`;
     case 'temperature':
       return 'Temperature';
     case 'systemPrompt':
@@ -78,7 +74,7 @@ export function wizardSummary(state: ConfigWizardState): string {
     'Format: Anthropic (/anthropic/v1/messages)',
     `API key: ${state.draft.apiKey ? maskApiKey(state.draft.apiKey) : '(missing)'}`,
     `Model: ${state.draft.model ?? DEFAULT_MODEL}`,
-    `Max tokens: ${state.draft.maxTokens ?? 'auto'}`,
+    'Max output tokens: fixed by model',
     `Temperature: ${state.draft.temperature ?? DEFAULT_TEMPERATURE}`,
     `Instructions: ${state.draft.systemPrompt ? 'custom' : 'default'}`,
     `MCP servers: ${state.draft.mcpServers?.length ?? 0}`,
@@ -116,12 +112,7 @@ export function updateWizard(state: ConfigWizardState, rawInput: string): Config
     }
     if (state.step === 'model') {
       if (!SUPPORTED_MODELS.includes(input as (typeof SUPPORTED_MODELS)[number])) return withError(state, 'Unsupported model');
-      return next(state, 'maxTokens', { model: input });
-    }
-    if (state.step === 'maxTokens') {
-      const maxTokens = input ? Number.parseInt(input, 10) : undefined;
-      if (maxTokens !== undefined && (!Number.isInteger(maxTokens) || maxTokens <= 0)) return withError(state, 'Please enter a positive integer');
-      return next(state, 'temperature', maxTokens ? { maxTokens } : {});
+      return next(state, 'temperature', { model: input });
     }
     if (state.step === 'temperature') {
       const temperature = input ? Number.parseFloat(input) : DEFAULT_TEMPERATURE;
@@ -150,6 +141,7 @@ export function updateWizard(state: ConfigWizardState, rawInput: string): Config
 
 export async function saveWizardConfig(state: ConfigWizardState): Promise<string> {
   const config = { ...state.existing, ...state.draft };
+  delete config.maxTokens;
   return writeUserConfig(config);
 }
 
@@ -168,7 +160,6 @@ function previousStep(step: ConfigWizardStep): ConfigWizardStep {
     'tokenRegion',
     'customBaseUrl',
     'model',
-    'maxTokens',
     'temperature',
     'systemPrompt',
     'mcpServers',

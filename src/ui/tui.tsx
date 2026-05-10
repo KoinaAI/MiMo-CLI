@@ -7,6 +7,7 @@ import { execFileSync, execSync } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { findMentionAt, applyMention, suggestMentions, expandMentions } from './mentions.js';
+import { expandMediaAttachments } from './media.js';
 import { composeInEditor } from './editor.js';
 import { CodingAgent } from '../agent/agent.js';
 import { discoverNamedSubagents } from '../agent/named-subagents.js';
@@ -17,10 +18,11 @@ import { initProject } from '../config/init.js';
 import { runDiagnostics, formatDiagnostics } from '../doctor/checks.js';
 import { addMemoryNote, listMemoryNotes } from '../memory/store.js';
 import { createConfigWizardState, saveWizardConfig, updateWizard, wizardPrompt, wizardSummary } from '../config/tui-wizard.js';
+import { maxOutputTokensForModel } from '../config/config.js';
 import { createSession, listSessions, readSession, saveSession, exportSession } from '../session/store.js';
 import { getTodoStore } from '../tools/todo.js';
 import { getMcpRegistry } from '../mcp/registry.js';
-import { DEFAULT_BASE_URL, DEFAULT_MODEL, DEFAULT_TEMPERATURE, SUPPORTED_MODELS } from '../constants.js';
+import { DEFAULT_BASE_URL, DEFAULT_MODEL, DEFAULT_TEMPERATURE, MODEL_DESCRIPTIONS, MODEL_TIERS, MULTIMODAL_MODELS, SUPPORTED_MODELS } from '../constants.js';
 import { formatNetworkPolicy, allowHost, denyHost, resetNetworkPolicy } from '../policy/network.js';
 import { describeSandbox, defaultSandboxForMode } from '../policy/sandbox.js';
 import { renderMarkdown } from './markdown.js';
@@ -28,7 +30,7 @@ import { appendInputHistory, loadInputHistory } from './history.js';
 import { TranscriptEntry, type TranscriptKind, type TranscriptMessage } from './transcript.js';
 import { isLikelyDiff } from './diff.js';
 import { ThinkingBuffer } from './thinking-buffer.js';
-import { formatUsage, formatCost } from '../agent/usage.js';
+import { calculateContextDefault, formatUsage, formatCost, isTokenPlanSupported } from '../agent/usage.js';
 import type {
   AgentEvent,
   AgentOptions,
@@ -159,7 +161,7 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
   const enabledMcpServers = runtimeConfig.mcpServers?.filter((server) => server.enabled !== false).length ?? 0;
   const enabledHooks = runtimeConfig.hooks?.filter((hook) => hook.enabled !== false).length ?? 0;
   const enabledConfigSkills = runtimeConfig.skills?.filter((skill) => skill.enabled !== false).length ?? 0;
-  const contextBar = formatContextStats(session.messages);
+  const contextBar = formatContextStats(session.messages, runtimeConfig.contextLimit);
 
   // Load persistent input history once.
   useEffect(() => {
@@ -360,10 +362,8 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
         flushThinking();
         flushStreaming();
         setUsage(event.result.usage);
-        if (event.result.cost) setSessionCost(event.result.cost);
-        // Cost lives in the persistent bottom usage bar — don't repeat it
-        // beneath every turn. We also drop the per-turn 'done' notice for
-        // single-iteration runs to keep the transcript Codex-clean.
+        setSessionCost(event.result.cost);
+        // Keep per-turn completion quiet; /info owns usage and billing details.
         if (event.result.iterations > 1) {
           append({ kind: 'system', title: 'done', body: `${event.result.iterations} iterations`, timestamp: formatTimestamp() });
         }
@@ -390,9 +390,18 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
   }, [append]);
 
   const switchModel = useCallback((target: string) => {
-    setRuntimeConfig((current) => ({ ...current, model: target }));
+    if (runtimeConfig.billingMode === 'token_plan' && !isTokenPlanSupported(target)) {
+      append({ kind: 'error', title: 'model', body: `${target} is not supported by Token Plan.`, timestamp: formatTimestamp() });
+      return;
+    }
+    setRuntimeConfig((current) => ({
+      ...current,
+      model: target,
+      maxTokens: maxOutputTokensForModel(target),
+      contextLimit: calculateContextDefault(current.billingMode, target),
+    }));
     append({ kind: 'system', title: 'model', body: `Switched to ${target} for this session.`, timestamp: formatTimestamp() });
-  }, [append]);
+  }, [append, runtimeConfig.billingMode]);
 
   const handleSlashCommand = useCallback(
     (value: string): boolean => {
@@ -522,7 +531,8 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
         });
         append({ kind: 'system', title: `tools (${tools.length})`, body: toolLines.join('\n'), timestamp: formatTimestamp() });
       }
-      if (command.name === 'status' || command.name === 'info') append({ kind: 'system', title: command.name, body: formatInfo(runtimeConfig, session, tools, usage, cwd, mode, sandbox, sessionCost, contextBar, builtinToolCount, mcpToolCount, enabledMcpServers, enabledHooks, enabledConfigSkills, discoveredSkillsCount, namedSubagentsCount), timestamp: formatTimestamp() });
+      if (command.name === 'status') append({ kind: 'system', title: 'status', body: formatStatus(runtimeConfig, tools, cwd, mode, sandbox, contextBar, builtinToolCount, mcpToolCount, enabledMcpServers, enabledHooks, enabledConfigSkills, discoveredSkillsCount, namedSubagentsCount), timestamp: formatTimestamp() });
+      if (command.name === 'info') append({ kind: 'system', title: 'info', body: formatInfo(runtimeConfig, session, tools, usage, cwd, mode, sandbox, sessionCost, contextBar, builtinToolCount, mcpToolCount, enabledMcpServers, enabledHooks, enabledConfigSkills, discoveredSkillsCount, namedSubagentsCount), timestamp: formatTimestamp() });
       if (command.name === 'workflow') append({
         kind: 'system',
         title: 'workflow',
@@ -612,10 +622,9 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
         if (desc) append({ kind: 'system', title: 'bug', body: `Bug recorded: ${desc}\nReport at: https://github.com/KoinaAI/MiMo-CLI/issues`, timestamp: formatTimestamp() });
         else append({ kind: 'error', title: 'bug', body: 'Usage: /bug <description>', timestamp: formatTimestamp() });
       }
-      if (command.name === 'context') append({ kind: 'system', title: 'context', body: formatContextStats(session.messages), timestamp: formatTimestamp() });
+      if (command.name === 'context') append({ kind: 'system', title: 'context', body: formatContextStats(session.messages, runtimeConfig.contextLimit), timestamp: formatTimestamp() });
       if (command.name === 'cost') {
-        const costStr = formatCost(sessionCost);
-        append({ kind: 'system', title: 'session cost', body: costStr || 'No cost data yet', timestamp: formatTimestamp() });
+        append({ kind: 'system', title: 'billing', body: 'Use /info for session billing details.', timestamp: formatTimestamp() });
       }
       if (command.name === 'todo') {
         const todos = getTodoStore();
@@ -713,7 +722,30 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
       append({ kind: 'user', title: 'you', body: task, timestamp: formatTimestamp() });
       void (async () => {
         let promptForModel = task;
-        const expansion = await expandMentions(task, async (rel) => {
+        let contentForModel: ChatMessage['content'] = task;
+        const mediaExpansion = await expandMediaAttachments(task, cwd);
+        if (mediaExpansion.content) {
+          if (!MULTIMODAL_MODELS.includes(runtimeConfig.model as (typeof MULTIMODAL_MODELS)[number])) {
+            append({
+              kind: 'error',
+              title: 'multimodal',
+              body: `${runtimeConfig.model} does not support images, video, or audio. Choose mimo-v2.5 or mimo-v2-omni.`,
+              timestamp: formatTimestamp(),
+            });
+            setRunning(false);
+            abortRef.current = null;
+            return;
+          }
+          promptForModel = mediaExpansion.prompt;
+          contentForModel = mediaExpansion.content;
+          append({
+            kind: 'system',
+            title: 'attached media',
+            body: mediaExpansion.attached.map((rel) => `  + ${rel}`).join('\n'),
+            timestamp: formatTimestamp(),
+          });
+        }
+        const expansion = await expandMentions(promptForModel, async (rel) => {
           const abs = path.resolve(cwd, rel);
           if (!abs.startsWith(path.resolve(cwd))) {
             throw new Error(`Refusing to read outside workspace: ${rel}`);
@@ -722,6 +754,8 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
         }).catch(() => undefined);
         if (expansion) {
           promptForModel = expansion.prompt;
+          if (typeof contentForModel === 'string') contentForModel = promptForModel;
+          else contentForModel = contentForModel.map((block) => block.type === 'text' ? { ...block, text: promptForModel } : block);
           if (expansion.attached.length > 0) {
             append({
               kind: 'system',
@@ -739,11 +773,19 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
             });
           }
         }
-        const userMessage: ChatMessage = { role: 'user', content: promptForModel };
+        if (mediaExpansion.missing.length > 0) {
+          append({
+            kind: 'error',
+            title: 'media (missing)',
+            body: mediaExpansion.missing.map((rel) => `  ! ${rel}`).join('\n'),
+            timestamp: formatTimestamp(),
+          });
+        }
+        const userMessage: ChatMessage = { role: 'user', content: contentForModel };
         const history = [...session.messages];
         addSessionMessages([userMessage]);
         try {
-          await agent.run(promptForModel, { onEvent: handleEvent, approveToolCall, signal: controller.signal }, history);
+          await agent.run(promptForModel, { onEvent: handleEvent, approveToolCall, signal: controller.signal }, history, contentForModel);
         } catch (error) {
           append({ kind: 'error', title: 'error', body: errorMessage(error), timestamp: formatTimestamp() });
         } finally {
@@ -753,7 +795,7 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
         }
       })();
     },
-    [addSessionMessages, agent, append, approveToolCall, handleEvent, handleSlashCommand, cwd, pendingLines, running, session.messages, wizard],
+    [addSessionMessages, agent, append, approveToolCall, handleEvent, handleSlashCommand, cwd, pendingLines, running, session.messages, wizard, runtimeConfig.model],
   );
 
   // Replace the prompt programmatically and remount the inner text input so
@@ -1020,9 +1062,12 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
           {modelPickerOpen ? (
             <Box borderStyle="round" borderColor="cyan" paddingX={1} flexDirection="column">
               <Text color="cyan" bold>✦ Switch model</Text>
-              <Text dimColor>Active session only — persist via /settings.</Text>
+              <Text dimColor>Active session only — persist via /settings. Output limits are fixed per model.</Text>
               <SelectInput
-                items={SUPPORTED_MODELS.map((modelName) => ({ label: `${modelName === runtimeConfig.model ? '› ' : '  '}${modelName}`, value: modelName }))}
+                items={MODEL_TIERS.flatMap(({ tier, models }) => models.map((modelName) => ({
+                  label: `${modelName === runtimeConfig.model ? '› ' : '  '}[${tier}] ${modelName.padEnd(16)} ${MODEL_DESCRIPTIONS[modelName]}`,
+                  value: modelName,
+                })))}
                 onSelect={(item) => {
                   switchModel(item.value);
                   setModelPickerOpen(false);
@@ -1123,7 +1168,7 @@ interface BottomStatusBarProps {
  *
  * Row 1 carries the brand-led status line (mode, model, cwd, branch,
  * context utilization) that used to live above the transcript.
- * Row 2 lists runtime/workflow segments (max tokens, MCP, skills, sandbox
+ * Row 2 lists runtime/workflow segments (billing mode, MCP, skills, sandbox
  * flags) plus the most-used keyboard shortcuts. Both rows stay dim so they
  * remain subordinate to the transcript above.
  *
@@ -1132,7 +1177,7 @@ interface BottomStatusBarProps {
  */
 const BottomStatusBar = React.memo(function BottomStatusBar(props: BottomStatusBarProps): React.ReactElement {
   const { config, cwd, branch, alwaysApprove, dryRun, mcpToolCount, skillCount, mode, contextBar } = props;
-  const segments: string[] = [`max ${config.maxTokens.toLocaleString()}`];
+  const segments: string[] = [`${config.billingMode === 'token_plan' ? 'Token Plan' : 'Paygo'}`];
   if (mcpToolCount > 0) segments.push(`${mcpToolCount} MCP`);
   if (skillCount > 0) segments.push(`${skillCount} skills`);
   if (alwaysApprove) segments.push('auto-approve');
@@ -1212,10 +1257,36 @@ function formatInfo(
   subagents: number,
 ): string {
   return [
-    `${modeIndicator(mode)} · ${config.model} · anthropic · max ${config.maxTokens.toLocaleString()}`,
+    `${modeIndicator(mode)} · ${config.model} · ${config.billingMode === 'token_plan' ? 'Token Plan' : 'Paygo'} · anthropic`,
     `Session ${session.id.slice(0, 8)} · ${session.messages.length} messages · ${shortenPath(cwd)}`,
     `Sandbox ${describeSandbox(sandbox)}`,
-    `Context ${contextSummary || 'empty'} · Tokens ${formatUsage(usage) || 'none yet'} · Cost ${formatCost(cost) || 'n/a'}`,
+    `Context ${contextSummary || 'empty'}`,
+    `Tokens ${formatUsage(usage) || 'none yet'}`,
+    `Billing ${formatCost(cost) || 'n/a'}${cost?.detail ? ` · ${cost.detail}` : ''}`,
+    `Tools ${tools.length} total · ${builtinTools} built-in · ${mcpTools} MCP · ${mcpServers} server(s)`,
+    `Workflow ${configuredSkills + discoveredSkills} skill(s) · ${hooks} hook(s) · ${subagents} named subagent(s)`,
+  ].join('\n');
+}
+
+function formatStatus(
+  config: RuntimeConfig,
+  tools: ToolDefinition[],
+  cwd: string,
+  mode: InteractionMode,
+  sandbox: SandboxLevel,
+  contextSummary: string,
+  builtinTools: number,
+  mcpTools: number,
+  mcpServers: number,
+  hooks: number,
+  configuredSkills: number,
+  discoveredSkills: number,
+  subagents: number,
+): string {
+  return [
+    `${modeIndicator(mode)} · ${config.model} · ${config.billingMode === 'token_plan' ? 'Token Plan' : 'Paygo'} · anthropic`,
+    `Workspace ${shortenPath(cwd)} · Sandbox ${describeSandbox(sandbox)}`,
+    `Context ${contextSummary || 'empty'}`,
     `Tools ${tools.length} total · ${builtinTools} built-in · ${mcpTools} MCP · ${mcpServers} server(s)`,
     `Workflow ${configuredSkills + discoveredSkills} skill(s) · ${hooks} hook(s) · ${subagents} named subagent(s)`,
   ].join('\n');
@@ -1356,7 +1427,7 @@ function formatSettingsMenu(state: ConfigWizard): string {
     `› Provider URL      ${state.draft.baseUrl ?? DEFAULT_BASE_URL}`,
     '  Wire format       Anthropic (/anthropic/v1/messages)',
     `  Model             ${state.draft.model ?? DEFAULT_MODEL}`,
-    `  Max tokens        ${state.draft.maxTokens ?? 'auto'}`,
+    '  Output tokens     fixed by model',
     `  Temperature       ${state.draft.temperature ?? DEFAULT_TEMPERATURE}`,
     `  Instructions      ${state.draft.systemPrompt ? 'custom' : 'default'}`,
     `  MCP servers       ${state.draft.mcpServers?.length ?? 0}`,
