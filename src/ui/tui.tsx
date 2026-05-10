@@ -679,20 +679,20 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
       setPendingLines([]);
       setModelPickerOpen(false);
       setModePickerOpen(false);
-      if (!task || running) {
+      if (running || (!task && !wizard)) {
         setPrompt('');
         return;
       }
       setPrompt('');
+      if (wizard) {
+        void handleWizardInput(task, wizard, setWizard, append);
+        return;
+      }
       if (task && !task.startsWith('/')) {
         lastUserPromptRef.current = task;
         setInputHistory((prev) => (prev[prev.length - 1] === task ? prev : [...prev, task]));
         void appendInputHistory(task);
         setHistoryIndex(-1);
-      }
-      if (wizard) {
-        void handleWizardInput(task, wizard, setWizard, append);
-        return;
       }
       if (handleSlashCommand(task)) return;
       setRunning(true);
@@ -789,6 +789,11 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
     }
     // Esc: cancel approval/interrupt; double tap on idle reopens last user turn.
     if (key.escape) {
+      if (wizard) {
+        setWizard(undefined);
+        append({ kind: 'system', title: 'settings', body: 'Cancelled. Type /settings to restart.', timestamp: formatTimestamp() });
+        return;
+      }
       if (approval) {
         approval.resolve('deny');
         setApproval(undefined);
@@ -916,7 +921,7 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
     : [];
   const suggestions = slashCommandSuggestions(prompt);
   const selectedSlash = suggestions[slashIndex % suggestions.length];
-  const inputHint = pendingLines.length > 0 ? ` (line ${pendingLines.length + 1})` : '';
+  const inputHint = wizard?.step === 'apiKey' ? ' (input hidden)' : pendingLines.length > 0 ? ` (line ${pendingLines.length + 1})` : '';
   const verb = activeTool ? `${verbForTool(activeTool.name)} ${activeTool.name}…` : mode === 'plan' ? 'Analyzing…' : 'Thinking…';
   const inputLines = Math.max(1, prompt.split('\n').length);
   const handlePromptChange = useCallback(
@@ -1079,6 +1084,7 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
               onSubmit={submit}
               onCursorChange={setCursor}
               cursorOverride={cursorOverride}
+              mask={wizard?.step === 'apiKey' ? '*' : undefined}
               placeholder="message MiMo · / for commands · @ for files · ↹ for shortcuts"
             />
           </Box>
@@ -1371,7 +1377,7 @@ async function handleWizardInput(
   if (wizard.step === 'review' && task === 'save') {
     const filePath = await saveWizardConfig(wizard);
     setWizard(undefined);
-    append({ kind: 'system', title: 'settings saved', body: `${filePath}\nRuntime-only API keys are not saved. Restart TUI to reload persisted settings.`, timestamp: formatTimestamp() });
+    append({ kind: 'system', title: 'settings saved', body: `${filePath}\nRestart TUI to reload persisted settings.`, timestamp: formatTimestamp() });
     return;
   }
   const nextWizard = updateWizard(wizard, task);

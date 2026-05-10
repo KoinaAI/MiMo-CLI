@@ -13,6 +13,7 @@ import { createMcpTools } from './mcp/stdio.js';
 import { defaultTools } from './tools/index.js';
 import type { HookEvent, HookPayload, InteractionMode, PersistedConfig, SandboxLevel } from './types.js';
 import { errorMessage } from './utils/errors.js';
+import { needsOnboarding, runOnboarding } from './ui/onboarding.js';
 import { runTui } from './ui/tui.js';
 
 const program = new Command();
@@ -336,6 +337,10 @@ async function runInteractive(options: CliOptions): Promise<void> {
   try {
     const cwd = options.cwd ?? process.cwd();
     const overrides = parseOverrides(options);
+    if (options.tui !== false && await needsOnboarding(cwd)) {
+      const onboarded = await runOnboarding();
+      if (!onboarded) return;
+    }
     const config = await loadConfig(cwd, overrides);
     const mcpTools = await createMcpTools(config.mcpServers, cwd);
     const allTools = [...defaultTools, ...mcpTools];

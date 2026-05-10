@@ -19,6 +19,7 @@ export interface MimoTextInputProps {
   placeholder?: string;
   focus?: boolean;
   showCursor?: boolean;
+  mask?: string | undefined;
   onChange(value: string): void;
   onSubmit?(value: string): void;
   /** Reports the current cursor offset every time it moves. Used by the
@@ -37,6 +38,7 @@ export function MimoTextInput({
   placeholder = '',
   focus = true,
   showCursor = true,
+  mask,
   onChange,
   onSubmit,
   onCursorChange,
@@ -137,7 +139,8 @@ export function MimoTextInput({
     return <Text>{chalk.inverse(' ')}</Text>;
   }
 
-  const lines = value.split('\n');
+  const displayValue = mask ? mask.repeat(value.length) : value;
+  const lines = displayValue.split('\n');
   const offsets: number[] = [];
   let offset = 0;
   for (const line of lines) {

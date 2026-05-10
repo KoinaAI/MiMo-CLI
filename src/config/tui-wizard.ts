@@ -3,6 +3,7 @@ import type { HookEvent, McpServerConfig, PersistedConfig, SkillConfig } from '.
 import { readPersistedConfig, tokenPlanBaseUrl, userConfigPath, writeUserConfig } from './config.js';
 
 export type ConfigWizardStep =
+  | 'apiKey'
   | 'baseUrlType'
   | 'tokenRegion'
   | 'customBaseUrl'
@@ -25,6 +26,7 @@ export interface ConfigWizardState {
 export async function createConfigWizardState(): Promise<ConfigWizardState> {
   const existing = await readPersistedConfig(userConfigPath());
   const draft: PersistedConfig = {
+    ...(existing.apiKey ? { apiKey: existing.apiKey } : {}),
     baseUrl: existing.baseUrl ?? DEFAULT_BASE_URL,
     model: existing.model ?? DEFAULT_MODEL,
     temperature: existing.temperature ?? DEFAULT_TEMPERATURE,
@@ -35,7 +37,7 @@ export async function createConfigWizardState(): Promise<ConfigWizardState> {
   if (existing.skills) draft.skills = existing.skills;
   if (existing.hooks) draft.hooks = existing.hooks;
   return {
-    step: 'baseUrlType',
+    step: 'apiKey',
     existing,
     draft,
   };
@@ -43,6 +45,8 @@ export async function createConfigWizardState(): Promise<ConfigWizardState> {
 
 export function wizardPrompt(state: ConfigWizardState): string {
   switch (state.step) {
+    case 'apiKey':
+      return state.existing.apiKey ? 'API key (blank keeps existing)' : 'API key';
     case 'baseUrlType':
       return 'Provider：api / token / custom';
     case 'tokenRegion':
@@ -72,6 +76,7 @@ export function wizardSummary(state: ConfigWizardState): string {
   const lines = [
     `Provider URL: ${state.draft.baseUrl ?? '(default)'}`,
     'Format: Anthropic (/anthropic/v1/messages)',
+    `API key: ${state.draft.apiKey ? maskApiKey(state.draft.apiKey) : '(missing)'}`,
     `Model: ${state.draft.model ?? DEFAULT_MODEL}`,
     `Max tokens: ${state.draft.maxTokens ?? 'auto'}`,
     `Temperature: ${state.draft.temperature ?? DEFAULT_TEMPERATURE}`,
@@ -79,15 +84,16 @@ export function wizardSummary(state: ConfigWizardState): string {
     `MCP servers: ${state.draft.mcpServers?.length ?? 0}`,
     `Skills: ${state.draft.skills?.length ?? 0}`,
     `Hooks: ${state.draft.hooks?.length ?? 0}`,
-    'API key: startup/runtime only, not saved here',
   ];
   return lines.join('\n');
 }
 
 export function updateWizard(state: ConfigWizardState, rawInput: string): ConfigWizardState {
   const input = rawInput.trim();
-  if (input === 'cancel') return { ...state, step: 'review', error: 'Cancelled. Type /settings to restart.' };
-  if (input === 'back') return { ...state, step: previousStep(state.step), error: undefined };
+  if (state.step !== 'apiKey') {
+    if (input === 'cancel') return { ...state, step: 'review', error: 'Cancelled. Type /settings to restart.' };
+    if (input === 'back') return { ...state, step: previousStep(state.step), error: undefined };
+  }
 
   try {
     if (state.step === 'baseUrlType') {
@@ -95,6 +101,11 @@ export function updateWizard(state: ConfigWizardState, rawInput: string): Config
       if (input === 'token') return next(state, 'tokenRegion', {});
       if (input === 'custom') return next(state, 'customBaseUrl', {});
       return withError(state, 'Please enter api / token / custom');
+    }
+    if (state.step === 'apiKey') {
+      if (!input && state.existing.apiKey) return next(state, 'baseUrlType', {});
+      if (!input) return withError(state, 'API key is required');
+      return next(state, 'baseUrlType', { apiKey: input });
     }
     if (state.step === 'tokenRegion') {
       return next(state, 'model', { baseUrl: tokenPlanBaseUrl(input) });
@@ -138,16 +149,8 @@ export function updateWizard(state: ConfigWizardState, rawInput: string): Config
 }
 
 export async function saveWizardConfig(state: ConfigWizardState): Promise<string> {
-  const draftWithoutKey = omitApiKey(state.draft);
-  const existingWithoutKey = omitApiKey(state.existing);
-  const config = { ...existingWithoutKey, ...draftWithoutKey };
+  const config = { ...state.existing, ...state.draft };
   return writeUserConfig(config);
-}
-
-function omitApiKey(config: PersistedConfig): PersistedConfig {
-  const copy = { ...config };
-  delete copy.apiKey;
-  return copy;
 }
 
 function next(state: ConfigWizardState, step: ConfigWizardStep, patch: PersistedConfig): ConfigWizardState {
@@ -160,6 +163,7 @@ function withError(state: ConfigWizardState, error: string): ConfigWizardState {
 
 function previousStep(step: ConfigWizardStep): ConfigWizardStep {
   const steps: ConfigWizardStep[] = [
+    'apiKey',
     'baseUrlType',
     'tokenRegion',
     'customBaseUrl',
@@ -173,7 +177,11 @@ function previousStep(step: ConfigWizardStep): ConfigWizardStep {
     'review',
   ];
   const index = steps.indexOf(step);
-  return steps[Math.max(0, index - 1)] ?? 'baseUrlType';
+  return steps[Math.max(0, index - 1)] ?? 'apiKey';
+}
+
+function maskApiKey(apiKey: string): string {
+  return apiKey.length > 8 ? `${apiKey.slice(0, 4)}****${apiKey.slice(-4)}` : '****';
 }
 
 function parseMcpServersInput(input: string): McpServerConfig[] {
