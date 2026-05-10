@@ -21,7 +21,7 @@ const program = new Command();
 program
   .name('mimo-code')
   .description('Terminal coding agent powered by Xiaomi MiMo models')
-  .version('0.2.0')
+  .version('0.3.0-alpha')
   .option('-C, --cwd <path>', 'workspace directory', process.cwd())
   .option('--model <model>', `model (${SUPPORTED_MODELS.join(', ')})`)
   .option('--base-url <url>', 'MiMo base URL')

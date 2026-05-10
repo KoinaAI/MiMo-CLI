@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Text, useInput } from 'ink';
 import chalk from 'chalk';
+import { createPastePlaceholder, isLargePaste } from './paste.js';
 
 /**
  * Replacement for `ink-text-input` with explicit cursor tracking.
@@ -20,6 +21,8 @@ export interface MimoTextInputProps {
   focus?: boolean;
   showCursor?: boolean;
   mask?: string | undefined;
+  /** Maximum visible columns before a logical line scrolls horizontally. */
+  viewportWidth?: number | undefined;
   onChange(value: string): void;
   onSubmit?(value: string): void;
   /** Reports the current cursor offset every time it moves. Used by the
@@ -31,6 +34,7 @@ export interface MimoTextInputProps {
    * completion). Setting this to a number forces the internal cursor to
    * that offset on the next render. */
   cursorOverride?: number | undefined;
+  onPasteCaptured?(placeholder: string, text: string): void;
 }
 
 export function MimoTextInput({
@@ -39,10 +43,12 @@ export function MimoTextInput({
   focus = true,
   showCursor = true,
   mask,
+  viewportWidth = 120,
   onChange,
   onSubmit,
   onCursorChange,
   cursorOverride,
+  onPasteCaptured,
 }: MimoTextInputProps): React.ReactElement {
   const [cursor, setCursor] = useState(value.length);
 
@@ -112,9 +118,12 @@ export function MimoTextInput({
       }
       if (key.ctrl || key.meta) return;
       if (!input) return;
-      const next = value.slice(0, cursor) + input + value.slice(cursor);
+      const existing = new Set(value.match(/\[Pasted Content \d+ chars(?: #\d+)?\]/gu) ?? []);
+      const text = isLargePaste(input) ? createPastePlaceholder(input, existing) : input;
+      const next = value.slice(0, cursor) + text + value.slice(cursor);
       onChange(next);
-      setCursor(cursor + input.length);
+      setCursor(cursor + text.length);
+      if (text !== input) onPasteCaptured?.(text, input);
     },
     { isActive: focus },
   );
@@ -126,6 +135,21 @@ export function MimoTextInput({
       if (i < text.length && i !== cursorIndex) rendered += text[i];
     }
     return rendered;
+  };
+
+  const visibleLine = (line: string, cursorInLine: number | undefined): { text: string; cursor: number | undefined } => {
+    if (line.length <= viewportWidth) return { text: line, cursor: cursorInLine };
+    const safeCursor = cursorInLine ?? line.length;
+    const headRoom = Math.max(0, viewportWidth - 1);
+    const start = Math.max(0, Math.min(safeCursor - headRoom, line.length - viewportWidth));
+    const end = start + viewportWidth;
+    const prefix = start > 0 ? '…' : '';
+    const suffix = end < line.length ? '…' : '';
+    const bodyStart = start + (prefix ? 1 : 0);
+    const bodyEnd = end - (suffix ? 1 : 0);
+    const text = `${prefix}${line.slice(bodyStart, bodyEnd)}${suffix}`;
+    const nextCursor = cursorInLine === undefined ? undefined : Math.max(0, Math.min(text.length, cursorInLine - bodyStart + prefix.length));
+    return { text, cursor: nextCursor };
   };
 
   if (value.length === 0) {
@@ -154,7 +178,8 @@ export function MimoTextInput({
         const start = offsets[index] ?? 0;
         const end = start + line.length;
         const cursorInLine = focus && showCursor && cursor >= start && cursor <= end ? cursor - start : undefined;
-        const content = cursorInLine === undefined ? line : renderValue(line, cursorInLine);
+        const visible = visibleLine(line, cursorInLine);
+        const content = visible.cursor === undefined ? visible.text : renderValue(visible.text, visible.cursor);
         return `${index === 0 ? '' : '\n'}${content}`;
       }).join('')}
     </Text>

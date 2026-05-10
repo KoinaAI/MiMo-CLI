@@ -97,4 +97,35 @@ describe('MimoTextInput', () => {
     expect(frame).toContain('two');
     expect(frame).toContain('\n');
   });
+
+  it('compacts large pasted input into a placeholder', () => {
+    let captured = '';
+    let capturedPaste: { placeholder: string; text: string } | undefined;
+    const { stdin } = render(
+      <MimoTextInput
+        value={captured}
+        onChange={(v) => { captured = v; }}
+        onPasteCaptured={(placeholder, text) => {
+          capturedPaste = { placeholder, text };
+        }}
+      />,
+    );
+    const largePaste = `${'x'.repeat(1001)}\nsecond line`;
+    stdin.write(largePaste);
+    expect(captured).toBe('[Pasted Content 1013 chars]');
+    expect(capturedPaste).toEqual({ placeholder: '[Pasted Content 1013 chars]', text: largePaste });
+  });
+
+  it('horizontally scrolls long single-line input around the cursor', () => {
+    const { lastFrame } = render(
+      <MimoTextInput
+        value="abcdefghijklmnopqrstuvwxyz"
+        onChange={() => undefined}
+        viewportWidth={10}
+      />,
+    );
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('…rstuvwxyz');
+    expect(frame).not.toContain('abcdefghij');
+  });
 });

@@ -7,11 +7,11 @@ MiMo Code CLI is a terminal-based Coding Agent powered by Xiaomi's MiMo models. 
 ## Features
 
 - Full TUI, Web UI, and non-interactive modes: `mimo-code` / `mimo-code webui` / `mimo-code run "task"`.
-- Claude Code–style borderless full-screen TUI: splash screen, message stream, tool calls, tool results, bottom input box, status bar, token usage, and keyboard shortcut hints.
+- Claude Code–style full-screen TUI with Codex-smooth streaming: static transcript rendering, throttled live deltas, command/file palettes, history search, compact large-paste placeholders, and context-aware footer hints.
 - Browser-based Web UI with the same agent, sessions, tools, hooks, skills, and approval flow — inspired by [opencode](https://github.com/anomalyco/opencode).
 - Approval UI for write-file, edit-file, and run-shell operations.
 - Built-in `/settings` wizard in the TUI — no need to leave the terminal.
-- Support for `/`-prefixed slash commands, Claude-style command selection, resumable sessions, MCP stdio tools, Skill loading, Hooks, and git worktrees.
+- Support for `/`-prefixed slash commands, Claude-style command selection, `Ctrl+R` history search, resumable sessions, MCP stdio tools, Skill loading, Hooks, and git worktrees.
 - Works with both standard pay-as-you-go API Keys and Token Plan Keys.
 - Uses the Anthropic-compatible `/anthropic` API format.
 - Built-in coding tools: list directory, read file, write file, exact replace, full-text search, run shell command.
@@ -20,6 +20,8 @@ MiMo Code CLI is a terminal-based Coding Agent powered by Xiaomi's MiMo models. 
 - Dry-run mode for previewing file writes and shell commands before executing them.
 
 ## Installation
+
+Current development version: `v0.3.0-alpha`.
 
 ### Install from Source
 

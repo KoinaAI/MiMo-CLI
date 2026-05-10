@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Box, render, Static, Text, useApp, useInput, useStdin } from 'ink';
 import Spinner from 'ink-spinner';
 import SelectInput from 'ink-select-input';
@@ -8,6 +8,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { findMentionAt, applyMention, suggestMentions, expandMentions } from './mentions.js';
 import { expandMediaAttachments } from './media.js';
+import { expandPastePlaceholders } from './paste.js';
 import { composeInEditor } from './editor.js';
 import { CodingAgent } from '../agent/agent.js';
 import { discoverNamedSubagents } from '../agent/named-subagents.js';
@@ -53,7 +54,7 @@ import {
   SLASH_COMMAND_HELP,
 } from './commands.js';
 import { summarizeToolInput, summarizeToolInputCompact, summarizeToolOutput, summarizeToolOutputCompact, formatTimestamp, formatDuration } from './format.js';
-import { SPLASH, modeIndicator, shortenPath, verbForTool, formatWorkflowSummary, topStatusLine, modeBorderColor, modePromptGlyph, turnDivider } from './theme.js';
+import { SPLASH, modeIndicator, shortenPath, verbForTool, formatWorkflowSummary, topStatusLine, modeBorderColor, modePromptGlyph, turnDivider, footerHint, type FooterIntent } from './theme.js';
 
 interface PendingApproval {
   toolCall: ToolCall;
@@ -63,6 +64,7 @@ interface PendingApproval {
 
 const KEYBOARD_SHORTCUTS = [
   'Enter            Send the current message',
+  'Ctrl+J           Insert a newline',
   '\\ then Enter     Continue the message on a new line',
   '↑ / ↓            Navigate input history',
   '← / →            Move cursor within the input',
@@ -71,6 +73,7 @@ const KEYBOARD_SHORTCUTS = [
   'End  / Ctrl+E    Jump to end of line',
   'Tab              Cycle slash-command completions',
   'Shift+Tab        Cycle Plan / Agent / YOLO mode',
+  'Ctrl+R           Reverse-search input history',
   'Ctrl+L           Clear the transcript',
   'Ctrl+U           Reset the current input',
   'Ctrl+W           Delete the previous word',
@@ -141,6 +144,10 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
   const [modePickerOpen, setModePickerOpen] = useState(false);
   const [slashIndex, setSlashIndex] = useState(0);
   const [editingTurn, setEditingTurn] = useState(false);
+  const [historySearch, setHistorySearch] = useState(false);
+  const [historySearchQuery, setHistorySearchQuery] = useState('');
+  const [capturedPastes, setCapturedPastes] = useState<Map<string, string>>(() => new Map());
+  const [footerIntent, setFooterIntent] = useState<FooterIntent>('idle');
   const alwaysApproveRef = useRef(options.autoApprove);
   const abortRef = useRef<AbortController | null>(null);
   const lastCtrlCRef = useRef(0);
@@ -154,7 +161,10 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
   const messagesHasContentRef = useRef(false);
   const thinkingBufferRef = useRef(new ThinkingBuffer());
   const streamingBufferRef = useRef('');
-  const agent = new CodingAgent(runtimeConfig, tools, { ...options, cwd, mode, sandbox });
+  const agent = useMemo(
+    () => new CodingAgent(runtimeConfig, tools, { ...options, cwd, mode, sandbox }),
+    [runtimeConfig, tools, options, cwd, mode, sandbox],
+  );
 
   const mcpToolCount = tools.filter((tool) => tool.name.startsWith('mcp__')).length;
   const builtinToolCount = tools.length - mcpToolCount;
@@ -197,25 +207,29 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
 
   // Recompute @-mention completions whenever the prompt or caret moves.
   useEffect(() => {
+    if (historySearch) {
+      setMentionResults((current) => (current.length === 0 ? current : []));
+      return;
+    }
     if (prompt.startsWith('/')) {
-      if (mentionResults.length > 0) setMentionResults([]);
+      setMentionResults((current) => (current.length === 0 ? current : []));
       return;
     }
     const ctx = findMentionAt(prompt, cursor);
     if (!ctx) {
-      if (mentionResults.length > 0) setMentionResults([]);
+      setMentionResults((current) => (current.length === 0 ? current : []));
       return;
     }
     let cancelled = false;
     void suggestMentions(cwd, ctx.query).then((results) => {
       if (cancelled) return;
-      setMentionResults(results);
+      setMentionResults((current) => (arraysEqual(current, results) ? current : results));
       setMentionIndex(0);
     });
     return () => {
       cancelled = true;
     };
-  }, [prompt, cursor, cwd, mentionResults.length]);
+  }, [prompt, cursor, cwd, historySearch]);
 
   const append = useCallback((message: Omit<TranscriptMessage, 'id'>) => {
     setMessages((prev) => {
@@ -674,7 +688,7 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
 
   const submit = useCallback(
     (value: string) => {
-      const raw = value;
+      const raw = expandPastePlaceholders(value, capturedPastes);
       // Multi-line continuation: if the line ends with a backslash, queue it
       // and keep the input open for more text. Otherwise concatenate and submit.
       if (raw.endsWith('\\')) {
@@ -686,6 +700,7 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
       const task = buffered.trim();
       setEditingTurn(false);
       setPendingLines([]);
+      setCapturedPastes(new Map());
       setModelPickerOpen(false);
       setModePickerOpen(false);
       if (running || (!task && !wizard)) {
@@ -795,7 +810,7 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
         }
       })();
     },
-    [addSessionMessages, agent, append, approveToolCall, handleEvent, handleSlashCommand, cwd, pendingLines, running, session.messages, wizard, runtimeConfig.model],
+    [addSessionMessages, agent, append, approveToolCall, handleEvent, handleSlashCommand, cwd, pendingLines, running, session.messages, wizard, runtimeConfig.model, capturedPastes],
   );
 
   // Replace the prompt programmatically and remount the inner text input so
@@ -806,6 +821,11 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
     setPrompt(next);
     setInputKey((k) => k + 1);
   }, []);
+
+  const filteredHistory = historySearchQuery
+    ? inputHistory.filter((entry) => entry.toLowerCase().includes(historySearchQuery.toLowerCase())).slice(-8).reverse()
+    : inputHistory.slice(-8).reverse();
+  const selectedHistorySearch = filteredHistory[historyIndex >= 0 ? historyIndex % filteredHistory.length : 0];
 
   useInput((input, key) => {
     // Ctrl+C: Codex-style double tap before quitting.
@@ -826,11 +846,18 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
         return;
       }
       lastCtrlCRef.current = nowMs;
+      setFooterIntent('confirm-exit');
       append({ kind: 'system', title: 'exit', body: `Press Ctrl+C again to quit.\nSession ${session.id}\nResume with: mimo-code --resume ${session.id.slice(0, 8)}`, timestamp: formatTimestamp() });
       return;
     }
     // Esc: cancel approval/interrupt; double tap on idle reopens last user turn.
     if (key.escape) {
+      if (historySearch) {
+        setHistorySearch(false);
+        setHistorySearchQuery('');
+        setFooterIntent('idle');
+        return;
+      }
       if (wizard) {
         setWizard(undefined);
         append({ kind: 'system', title: 'settings', body: 'Cancelled. Type /settings to restart.', timestamp: formatTimestamp() });
@@ -869,6 +896,33 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
       return;
     }
     if (approval || running) return;
+    if (historySearch) {
+      if (key.return) {
+        if (selectedHistorySearch) replacePrompt(selectedHistorySearch);
+        setHistorySearch(false);
+        setHistorySearchQuery('');
+        setHistoryIndex(-1);
+        setFooterIntent('idle');
+        return;
+      }
+      if (key.upArrow) {
+        if (filteredHistory.length > 0) setHistoryIndex((idx) => (idx <= 0 ? filteredHistory.length - 1 : idx - 1));
+        return;
+      }
+      if (key.downArrow) {
+        if (filteredHistory.length > 0) setHistoryIndex((idx) => (idx + 1) % filteredHistory.length);
+        return;
+      }
+      if (key.backspace) {
+        setHistorySearchQuery((query) => query.slice(0, -1));
+        setHistoryIndex(0);
+        return;
+      }
+      if (key.ctrl || key.meta || key.tab || !input) return;
+      setHistorySearchQuery((query) => `${query}${input}`);
+      setHistoryIndex(0);
+      return;
+    }
     if (key.shift && key.tab) {
       const order: InteractionMode[] = ['plan', 'agent', 'yolo'];
       switchMode(order[(order.indexOf(mode) + 1) % order.length] ?? 'agent');
@@ -878,6 +932,13 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
     if (key.ctrl && input === 'l') {
       append({ kind: 'splash', title: '', body: SPLASH });
       messagesHasContentRef.current = false;
+      return;
+    }
+    if (key.ctrl && input === 'r') {
+      setHistorySearch(true);
+      setHistorySearchQuery('');
+      setHistoryIndex(0);
+      setFooterIntent('completion');
       return;
     }
     // Ctrl+U: clear current input.
@@ -966,15 +1027,31 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
   const inputHint = wizard?.step === 'apiKey' ? ' (input hidden)' : pendingLines.length > 0 ? ` (line ${pendingLines.length + 1})` : '';
   const verb = activeTool ? `${verbForTool(activeTool.name)} ${activeTool.name}…` : mode === 'plan' ? 'Analyzing…' : 'Thinking…';
   const inputLines = Math.max(1, prompt.split('\n').length);
+  const visibleFooterIntent: FooterIntent = approval
+    ? 'approval'
+    : running
+      ? 'running'
+      : wizard
+        ? 'wizard'
+        : mentionResults.length > 0
+          ? 'mention'
+          : suggestions.length > 0 || historySearch
+            ? 'completion'
+            : capturedPastes.size > 0
+              ? 'pastes'
+              : editingTurn
+                ? 'editing'
+                : footerIntent;
   const handlePromptChange = useCallback(
     (value: string) => {
       setPrompt(value);
+      if (footerIntent !== 'idle') setFooterIntent('idle');
       if (cursorOverride !== undefined) setCursorOverride(undefined);
       if (historyIndex !== -1) setHistoryIndex(-1);
       if (tabCycle !== 0) setTabCycle(0);
       if (slashIndex !== 0) setSlashIndex(0);
     },
-    [historyIndex, tabCycle, cursorOverride, slashIndex],
+    [historyIndex, tabCycle, cursorOverride, slashIndex, footerIntent],
   );
 
   useEffect(() => {
@@ -1076,8 +1153,11 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
             </Box>
           ) : null}
           {suggestions.length > 0 ? (
-            <Box flexDirection="column" paddingX={1} marginTop={1}>
-              <Text dimColor>commands</Text>
+            <Box flexDirection="column" paddingX={1} marginTop={1} borderStyle="single" borderColor="gray">
+              <Text>
+                <Text color="cyan" bold>commands</Text>
+                <Text dimColor> · slash palette</Text>
+              </Text>
               {suggestions.map((suggestion) => {
                 const selected = selectedSlash?.name === suggestion.name;
                 return selected ? (
@@ -1091,12 +1171,15 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
                   </Text>
                 );
               })}
-              <Text dimColor>↑↓ select · Tab complete · Enter run</Text>
+              <Text dimColor>{footerHint('completion', mode)}</Text>
             </Box>
           ) : null}
           {mentionResults.length > 0 ? (
-            <Box flexDirection="column" paddingX={1} marginTop={1}>
-              <Text dimColor>files matching "{findMentionAt(prompt, cursor)?.query ?? ''}" · Tab to insert · ↑↓ to choose</Text>
+            <Box flexDirection="column" paddingX={1} marginTop={1} borderStyle="single" borderColor="gray">
+              <Text>
+                <Text color="cyan" bold>@ files</Text>
+                <Text dimColor> · matching "{findMentionAt(prompt, cursor)?.query ?? ''}"</Text>
+              </Text>
               {mentionResults.map((rel, idx) => {
                 const active = idx === mentionIndex;
                 return active ? (
@@ -1107,6 +1190,27 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
                   <Text key={rel} dimColor>{'  '}{rel}</Text>
                 );
               })}
+            </Box>
+          ) : null}
+          {historySearch ? (
+            <Box flexDirection="column" paddingX={1} marginTop={1} borderStyle="single" borderColor="gray">
+              <Text>
+                <Text color="cyan" bold>history search</Text>
+                <Text dimColor> · Ctrl+R</Text>
+              </Text>
+              <Text>query: {historySearchQuery || <Text dimColor>type to filter</Text>}</Text>
+              {filteredHistory.length > 0 ? filteredHistory.map((entry, idx) => {
+                const active = idx === (historyIndex >= 0 ? historyIndex % filteredHistory.length : 0);
+                const line = entry.length > 120 ? `${entry.slice(0, 117)}...` : entry;
+                return active ? (
+                  <Text key={`${idx}-${entry}`}>
+                    <Text color="cyan" bold>› {line}</Text>
+                  </Text>
+                ) : (
+                  <Text key={`${idx}-${entry}`} dimColor>{'  '}{line}</Text>
+                );
+              }) : <Text dimColor>  No matching history</Text>}
+              <Text dimColor>↑↓ select · Enter insert · Esc cancel</Text>
             </Box>
           ) : null}
           {pendingLines.length > 0 ? (
@@ -1129,6 +1233,10 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
               onSubmit={submit}
               onCursorChange={setCursor}
               cursorOverride={cursorOverride}
+              onPasteCaptured={(placeholder, text) => {
+                setCapturedPastes((prev) => new Map(prev).set(placeholder, text));
+                setFooterIntent('pastes');
+              }}
               mask={wizard?.step === 'apiKey' ? '*' : undefined}
               placeholder="message MiMo · / for commands · @ for files · ↹ for shortcuts"
             />
@@ -1143,6 +1251,7 @@ function TuiApp({ config, tools, options }: TuiAppProps): React.ReactElement {
             skillCount={enabledConfigSkills + discoveredSkillsCount}
             mode={mode}
             contextBar={contextBar}
+            intent={visibleFooterIntent}
           />
         </Box>
       )}
@@ -1161,6 +1270,7 @@ interface BottomStatusBarProps {
   skillCount: number;
   mode: InteractionMode;
   contextBar: string;
+  intent: FooterIntent;
 }
 
 /**
@@ -1176,15 +1286,13 @@ interface BottomStatusBarProps {
  * unrelated parent state (prompt text, slash-popup index, etc.) changes.
  */
 const BottomStatusBar = React.memo(function BottomStatusBar(props: BottomStatusBarProps): React.ReactElement {
-  const { config, cwd, branch, alwaysApprove, dryRun, mcpToolCount, skillCount, mode, contextBar } = props;
+  const { config, cwd, branch, alwaysApprove, dryRun, mcpToolCount, skillCount, mode, contextBar, intent } = props;
   const segments: string[] = [`${config.billingMode === 'token_plan' ? 'Token Plan' : 'Paygo'}`];
   if (mcpToolCount > 0) segments.push(`${mcpToolCount} MCP`);
   if (skillCount > 0) segments.push(`${skillCount} skills`);
   if (alwaysApprove) segments.push('auto-approve');
   if (dryRun) segments.push('dry-run');
-  segments.push('enter send');
-  segments.push('shift+tab mode');
-  segments.push('ctrl+c interrupt');
+  segments.push(footerHint(intent, mode));
   return (
     <Box flexDirection="column" paddingX={1}>
       <Text>{topStatusLine(config, cwd, mode, branch, contextBar)}</Text>
@@ -1296,6 +1404,10 @@ function tailText(text: string, maxLines: number): string {
   const lines = text.split('\n');
   if (lines.length <= maxLines) return text;
   return [`… ${lines.length - maxLines} earlier line(s)`, ...lines.slice(-maxLines)].join('\n');
+}
+
+function arraysEqual(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
 function formatList(label: string, lines: string[]): string {
