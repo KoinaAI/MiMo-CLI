@@ -28,7 +28,7 @@ export const webFetchTool: ToolDefinition = {
       const timer = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT);
       const response = await fetch(url, {
         signal: controller.signal,
-        headers: { 'User-Agent': 'MiMo-Code-CLI/0.2.0' },
+        headers: { 'User-Agent': 'MiMo-Code-CLI/0.3.0-alpha' },
       });
       clearTimeout(timer);
       const text = await response.text();

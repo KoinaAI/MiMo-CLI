@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { statusLine, formatThinkingBlock, formatToolCallHeader, formatToolResult, formatDiffOutput, modeIndicator, SPLASH, MODE_LABELS, formatWorkflowSummary } from '../src/ui/theme.js';
+import { statusLine, formatThinkingBlock, formatToolCallHeader, formatToolResult, formatDiffOutput, modeIndicator, SPLASH, MODE_LABELS, formatWorkflowSummary, footerHint } from '../src/ui/theme.js';
 import type { RuntimeConfig, SessionRecord, ToolDefinition } from '../src/types.js';
 
 const config: RuntimeConfig = {
@@ -30,6 +30,7 @@ describe('theme', () => {
   it('SPLASH contains branding text', () => {
     expect(SPLASH).toContain('Welcome to MiMo Code');
     expect(SPLASH).toContain('/settings for config');
+    expect(SPLASH).toContain('v0.3.0-alpha');
   });
 
   it('MODE_LABELS has all three modes', () => {
@@ -94,5 +95,10 @@ describe('theme', () => {
     expect(summary).toContain('MCP tools');
     expect(summary).toContain('2');
     expect(summary).toContain('Named subagents');
+  });
+
+  it('formats contextual footer hints', () => {
+    expect(footerHint('running', 'agent')).toContain('interrupt');
+    expect(footerHint('pastes', 'agent')).toContain('Large paste');
   });
 });

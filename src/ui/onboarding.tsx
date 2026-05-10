@@ -225,7 +225,7 @@ function WelcomeStep(): React.ReactElement {
   return (
     <Box flexDirection="column">
       <Text bold>  Welcome to MiMo Code</Text>
-      <Text dimColor>  Intelligent Coding Agent · v0.2.0</Text>
+      <Text dimColor>  Intelligent Coding Agent · v0.3.0-alpha</Text>
       <Text> </Text>
       <Text>  Before you start, let's configure your API connection.</Text>
       <Text dimColor>  MiMo Code uses the Anthropic-compatible API format.</Text>

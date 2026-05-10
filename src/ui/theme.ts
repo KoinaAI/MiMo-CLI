@@ -25,10 +25,10 @@ export const SPLASH = [
   '',
   ...SPLASH_LOGO.map((line) => chalk.cyan(line)),
   '',
-  `  ${chalk.bold('Welcome to MiMo Code')} ${chalk.dim('· Intelligent Coding Agent · v0.2.0')}`,
+  `  ${chalk.bold('Welcome to MiMo Code')} ${chalk.dim('· Intelligent Coding Agent · v0.3.0-alpha')}`,
   '',
   `  ${chalk.dim('/help')} ${chalk.dim('for commands')} ${chalk.dim('·')} ${chalk.dim('/settings')} ${chalk.dim('for config')} ${chalk.dim('·')} ${chalk.dim('Shift+Tab')} ${chalk.dim('switches mode')}`,
-  `  ${chalk.dim('@')} ${chalk.dim('to mention files')} ${chalk.dim('·')} ${chalk.dim('/')} ${chalk.dim('to run a command')} ${chalk.dim('·')} ${chalk.dim('/keys')} ${chalk.dim('for shortcuts')}`,
+  `  ${chalk.dim('@')} ${chalk.dim('files/media')} ${chalk.dim('·')} ${chalk.dim('Ctrl+R')} ${chalk.dim('history search')} ${chalk.dim('·')} ${chalk.dim('/keys')} ${chalk.dim('shortcuts')}`,
   '',
 ].join('\n');
 
@@ -106,6 +106,31 @@ export function modeIndicator(mode: InteractionMode): string {
     yolo: '▲',
   };
   return `${icons[mode]} ${MODE_LABELS[mode]}`;
+}
+
+export type FooterIntent = 'idle' | 'running' | 'completion' | 'mention' | 'wizard' | 'approval' | 'confirm-exit' | 'editing' | 'pastes';
+
+export function footerHint(intent: FooterIntent, mode: InteractionMode): string {
+  switch (intent) {
+    case 'running':
+      return 'Ctrl+C interrupt · type while running is kept in the composer';
+    case 'completion':
+      return '↑↓ select · Tab complete · Enter run';
+    case 'mention':
+      return '↑↓ select · Tab insert · media attaches on multimodal models';
+    case 'wizard':
+      return 'Enter next · back previous · cancel exit wizard';
+    case 'approval':
+      return '↑↓ choose · Enter confirm · Esc deny';
+    case 'confirm-exit':
+      return 'Press Ctrl+C again to quit · session is saved';
+    case 'editing':
+      return 'Editing previous turn · Esc cancel · Enter resubmit';
+    case 'pastes':
+      return 'Large paste compacted · model receives full pasted content';
+    default:
+      return `Enter send · Ctrl+J newline · Shift+Tab ${mode} · /help · /keys`;
+  }
 }
 
 /**
