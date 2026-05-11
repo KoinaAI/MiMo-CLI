@@ -1,29 +1,74 @@
-# MiMo Code CLI
+<div align="center">
+  <h1>🚀 MiMo Code CLI</h1>
+  <p><strong>A powerful terminal-based Coding Agent powered by Xiaomi's MiMo models.</strong></p>
+  
+  <p>
+    <a href="https://www.npmjs.com/package/@xiaomi-mimo/cli"><img src="https://img.shields.io/npm/v/@xiaomi-mimo/cli.svg?style=for-the-badge&color=blue" alt="npm version"></a>
+    <a href="https://nodejs.org"><img src="https://img.shields.io/node/v/@xiaomi-mimo/cli.svg?style=for-the-badge&color=green" alt="node version"></a>
+    <a href="https://github.com/KoinaAI/MiMo-CLI"><img src="https://img.shields.io/github/stars/KoinaAI/MiMo-CLI.svg?style=for-the-badge&color=yellow" alt="GitHub stars"></a>
+    <a href="https://github.com/KoinaAI/MiMo-CLI/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-GPLv2.0-blue.svg?style=for-the-badge" alt="License"></a>
+  </p>
+</div>
 
-MiMo Code CLI is a terminal-based Coding Agent powered by Xiaomi's MiMo models. It can read code, search text, edit files, and run commands within your local workspace, calling the MiMo API via the Anthropic-compatible interface to complete software development tasks.
+Welcome to **MiMo Code CLI**! This tool brings the power of Xiaomi's MiMo models directly into your local workspace. It can read code, search text, edit files, and run commands, securely integrating with the MiMo API via an Anthropic-compatible interface to streamline your software development workflow.
 
-<img width="1917" height="753" alt="image" src="https://github.com/user-attachments/assets/d665ae89-c523-4391-bf86-646372d0c844" />
+[![asciicast](https://asciinema.org/a/QGq0xs5zESNOoLrh.svg)](https://asciinema.org/a/QGq0xs5zESNOoLrh)
+<div align="center"><p>just a demo</p></div>
 
-## Features
+---
 
-- Full TUI, Web UI, and non-interactive modes: `mimo-code` / `mimo-code webui` / `mimo-code run "task"`.
-- Claude Code–style full-screen TUI with Codex-smooth streaming: static transcript rendering, throttled live deltas, command/file palettes, history search, compact large-paste placeholders, and context-aware footer hints.
-- Browser-based Web UI with the same agent, sessions, tools, hooks, skills, and approval flow — inspired by [opencode](https://github.com/anomalyco/opencode).
-- Approval UI for write-file, edit-file, and run-shell operations.
-- Built-in `/settings` wizard in the TUI — no need to leave the terminal.
-- Support for `/`-prefixed slash commands, Claude-style command selection, `Ctrl+R` history search, resumable sessions, MCP stdio tools, Skill loading, Hooks, and git worktrees.
-- Works with both standard pay-as-you-go API Keys and Token Plan Keys.
-- Uses the Anthropic-compatible `/anthropic` API format.
-- Built-in coding tools: list directory, read file, write file, exact replace, full-text search, run shell command.
-- Multi-level configuration: environment variables, project `.mimo-code.json`, user `~/.mimo-code/config.json`.
-- File access is restricted to the current workspace by default to prevent unauthorized reads/writes.
-- Dry-run mode for previewing file writes and shell commands before executing them.
+## 📖 Table of Contents
 
-## Installation
+- [✨ Features](#-features)
+- [🚀 Installation](#-installation)
+- [🧠 API & Models](#-api--models)
+- [⚙️ Configuration](#-configuration)
+- [💻 Usage](#-usage)
+- [📂 Project Structure](#-project-structure)
+- [🛠️ Built-in Tools](#-built-in-tools)
+- [🔌 MCP & Skills](#-mcp--skills)
+- [🪝 Hooks](#-hooks)
+- [🛡️ Security Boundaries](#-security-boundaries)
+- [💰 Pricing Reference](#-pricing-reference)
+- [🧑‍💻 Development & Testing](#-development--testing)
 
-Current development version: `v0.3.0-alpha`.
+---
 
-### Install from Source
+## ✨ Features
+
+- **Multi-Interface Support**: Full TUI, Web UI, and non-interactive modes (`mimo` / `mimo-code`).
+- **Rich Terminal UI (TUI)**: Full-screen experience with smooth streaming. Features include static transcript rendering, throttled live deltas, command/file palettes, history search, compact large-paste placeholders, and context-aware footer hints.
+- **Robust Architecture**: Supports `/`-prefixed slash commands, Claude-style command selection, `Ctrl+R` history search, resumable sessions, MCP stdio tools, Skill loading, Hooks, and git worktrees.
+- **Flexible Billing**: Works seamlessly with both standard pay-as-you-go API Keys and Token Plan Keys.
+- **Multi-Level Configuration**: Set defaults via environment variables, project `.mimo-code.json`, or user `~/.mimo-code/config.json`.
+- **Built-in Security**: File access is restricted strictly to the current workspace to prevent unauthorized reads/writes.
+- **Safe Execution**: Dry-run mode for previewing file writes and shell commands before executing them.
+
+> ~~**Browser-based Web UI**: Features the same agent, sessions, tools, hooks, skills, and approval flow — inspired by [opencode](https://github.com/anomalyco/opencode).~~ *(Not implemented yet)*
+
+---
+
+## 🚀 Installation
+
+*Current development version: `v0.3.0-alpha`.*
+
+### 📦 Install via npm
+
+Get started instantly via npm:
+
+```bash
+npm i -g @xiaomi-mimo/cli
+```
+
+Then use the CLI commands:
+
+```bash
+mimo-code --help
+# or
+mimo --help
+```
+
+### 🔨 Install from Source
 
 ```bash
 git clone https://github.com/KoinaAI/MiMo-CLI.git
@@ -33,14 +78,9 @@ npm run build
 npm link
 ```
 
-Then use:
+### 🧑‍💻 For Local Development
 
-```bash
-mimo-code --help
-mimo --help
-```
-
-### Local Development
+Requires **Node.js**: `>= 20.0.0`
 
 ```bash
 npm install
@@ -49,49 +89,11 @@ npm run build
 npm test
 ```
 
-Node.js requirement: `>=20.0.0`.
+---
 
-## API & Models
+## 🧠 API & Models
 
-### Base URL
-
-Standard pay-as-you-go API Key:
-
-```text
-https://api.xiaomimimo.com
-```
-
-Token Plan Key:
-
-```text
-https://token-plan-<region>.xiaomimimo.com
-```
-
-Available `region` values:
-
-- `cn` — China
-- `sgp` — Singapore
-- `ams` — Europe / Amsterdam
-
-The CLI can generate a Token Plan Base URL directly:
-
-```bash
-mimo-code base-url --region cn
-mimo-code base-url --region sgp
-mimo-code base-url --region ams
-```
-
-### API Format
-
-MiMo Code CLI uses the Anthropic-compatible endpoint only:
-
-| Format | Endpoint |
-| --- | --- |
-| Anthropic-compatible | `<baseUrl>/anthropic/v1/messages` |
-
-### Models
-
-Supported models:
+### 🤖 Supported Models
 
 - `mimo-v2.5-pro`
 - `mimo-v2.5`
@@ -99,73 +101,26 @@ Supported models:
 - `mimo-v2-omni`
 - `mimo-v2-flash`
 
-`mimo-v2.5` and `mimo-v2-omni` support multimodal input. In the TUI, attach image, video, or audio files by pasting/typing an `@path` reference (for example `@assets/screenshot.png`).
+> **Note**: `mimo-v2.5` and `mimo-v2-omni` support multimodal input! In the TUI, simply attach image, video, or audio files by pasting/typing an `@path` reference (e.g., `@assets/screenshot.png`).
 
-Maximum output tokens are capped automatically per model:
+### 📏 Context Limits
 
-| Model | Max Output Tokens |
-| --- | ---: |
-| `mimo-v2.5-pro` | 131072 |
-| `mimo-v2.5` | 32768 |
-| `mimo-v2-pro` | 131072 |
-| `mimo-v2-omni` | 32768 |
-| `mimo-v2-flash` | 65536 |
+Context defaults are selected based on your billing mode:
 
-Context defaults are selected by billing mode:
+- **Token Plan**: `1M` context where supported.
+- **Pay-as-you-go**: `256K` context.
+- *Exceptions*: `mimo-v2-omni` and `mimo-v2-flash` do not support the 1M context tier. Context is automatically compacted near the context limit when using `mimo-v2.5`.
 
-- Token Plan: 1M context where supported.
-- Pay-as-you-go: 256K context.
-- `mimo-v2-omni` and `mimo-v2-flash` do not support 1M context.
-- Context is automatically compacted near the context limit using `mimo-v2.5`.
+### 💳 Billing
 
-### Billing
+Billing summaries are displayed cleanly via the `/info` command in the TUI.
+For detailed information, please refer to [Pricing | Xiaomi Mimo](https://platform.xiaomimimo.com/docs/en-US/pricing).
 
-Billing details are shown only from `/info` in the TUI.
+---
 
-#### Pay-as-you-go pricing
+## ⚙️ Configuration
 
-Cache writes are free.
-
-Domestic (`¥` / 1K tokens):
-
-| Model | ≤256K cache hit input | ≤256K cache miss input | ≤256K output | 256K–1M cache hit input | 256K–1M cache miss input | 256K–1M output |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| `mimo-v2.5-pro`, `mimo-v2-pro` | ¥1.40 | ¥7.00 | ¥21.00 | ¥2.80 | ¥14.00 | ¥42.00 |
-| `mimo-v2.5` | ¥0.56 | ¥2.80 | ¥14.00 | ¥1.12 | ¥5.60 | ¥28.00 |
-| `mimo-v2-omni` | ¥0.56 | ¥2.80 | ¥14.00 | — | — | — |
-| `mimo-v2-flash` | ¥0.07 | ¥0.70 | ¥2.10 | — | — | — |
-
-International (`$` / 1K tokens):
-
-| Model | ≤256K cache hit input | ≤256K cache miss input | ≤256K output | 256K–1M cache hit input | 256K–1M cache miss input | 256K–1M output |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| `mimo-v2.5-pro`, `mimo-v2-pro` | $0.20 | $1.00 | $3.00 | $0.40 | $2.00 | $6.00 |
-| `mimo-v2.5` | $0.08 | $0.40 | $2.00 | $0.16 | $0.80 | $4.00 |
-| `mimo-v2-omni` | $0.08 | $0.40 | $2.00 | — | — | — |
-| `mimo-v2-flash` | $0.01 | $0.10 | $0.30 | — | — | — |
-
-#### Token Plan credit consumption
-
-Token Plan is independent from pay-as-you-go pricing and does not support `mimo-v2-flash`.
-
-| Model | Credit multiplier |
-| --- | ---: |
-| `mimo-v2.5` | 1x |
-| `mimo-v2.5-pro` | 2x |
-| `mimo-v2-omni` | 1x |
-| `mimo-v2-pro` | 2x |
-
-Night discount: UTC 16:00–24:00 / Beijing 00:00–08:00 uses a 0.8x credit coefficient.
-
-List available models:
-
-```bash
-mimo-code models
-```
-
-## Configuration
-
-### Interactive Configuration
+### 🧙‍♂️ Interactive Configuration
 
 ```bash
 mimo-code settings
@@ -177,13 +132,16 @@ Or inside the TUI:
 /settings
 ```
 
-The TUI settings wizard covers: API Key, Base URL type, Token Plan region, custom Base URL, model, temperature, system prompt, MCP servers, skills, and hooks. Maximum output tokens are fixed by model. Configuration is written to the user config file:
+The TUI settings wizard covers: API Key, Base URL type, Token Plan region, custom Base URL, model, temperature, system prompt, MCP servers, skills, and hooks. Maximum output tokens are fixed by the model. 
+
+Configuration is written to the user config file:
 
 ```text
 ~/.mimo-code/config.json
 ```
 
-Example:
+<details>
+<summary>View Example Configuration</summary>
 
 ```json
 {
@@ -218,10 +176,11 @@ Example:
   ]
 }
 ```
+</details>
 
-### Environment Variables
+### 🌐 Environment Variables
 
-Configuration can also be provided via environment variables:
+Need to set configs on the fly? Use environment variables:
 
 ```bash
 export MIMO_API_KEY="YOUR_MIMO_API_KEY"
@@ -229,23 +188,21 @@ export MIMO_BASE_URL="https://api.xiaomimimo.com"
 export MIMO_MODEL="mimo-v2.5-pro"
 ```
 
-Supported environment variables:
-
 | Variable | Description |
 | --- | --- |
-| `MIMO_API_KEY` | MiMo API Key — highest priority |
+| `MIMO_API_KEY` | MiMo API Key — highest priority ✨ |
 | `MIMO_BASE_URL` | Base URL |
 | `MIMO_MODEL` | Default model |
-| `MIMO_MAX_TOKENS` | Legacy compatibility only; runtime output cap is fixed by model |
+| `MIMO_MAX_TOKENS` | *Legacy compatibility only; runtime output cap is fixed by model* |
 | `MIMO_TEMPERATURE` | Sampling temperature |
 | `OPENAI_API_KEY` | Compatibility fallback |
 | `OPENAI_BASE_URL` | Compatibility fallback |
 | `ANTHROPIC_API_KEY` | Compatibility fallback |
 | `ANTHROPIC_BASE_URL` | Compatibility fallback |
 
-### Project-level Configuration
+### 📁 Project-level Configuration
 
-Create `.mimo-code.json` in the project root to override user defaults:
+Create a `.mimo-code.json` file in the project root to override user defaults seamlessly:
 
 ```json
 {
@@ -259,20 +216,21 @@ Create `.mimo-code.json` in the project root to override user defaults:
 }
 ```
 
-Do not commit real API Keys to project-level config. Use environment variables or enter them at startup.
+> ⚠️ **Security Warning**: Do NOT commit real API Keys to project-level configs. Always use environment variables or enter them at startup instead.
 
-### Configuration Priority
+### 🔢 Configuration Priority
 
-From lowest to highest:
+From lowest to highest priority:
+1. `⚙️ User config`: `~/.mimo-code/config.json`
+2. `📂 Project config`: `./.mimo-code.json`
+3. `🌐 Environment variables`
+4. `⌨️ CLI flags`
 
-1. User config: `~/.mimo-code/config.json`
-2. Project config: `./.mimo-code.json`
-3. Environment variables
-4. CLI flags
+---
 
-## Usage
+## 💻 Usage
 
-### Web UI
+### 🌐 Web UI (Alpha)
 
 ```bash
 mimo-code webui              # opens http://localhost:4280 in your browser
@@ -281,103 +239,81 @@ mimo-code webui --no-open    # do not auto-launch the browser
 mimo-code webui --mode plan  # start in Plan mode (read-only tools)
 ```
 
-The Web UI is a self-contained, opencode-inspired chat interface that ships with `mimo-code`. It exposes the same Coding Agent, sessions, MCP tools, skills, hooks, sandbox, and approval flow as the TUI — through a clean browser experience instead of the terminal.
+The Web UI is a self-contained, opencode-inspired chat interface that ships directly with `mimo-code`. It exposes the same powerful Coding Agent through a clean browser experience instead of the terminal.
 
-Key capabilities:
+**Key capabilities:**
+- **Three-pane layout**: Sessions sidebar · Message stream · Composer with mode/sandbox toggles.
+- **Streaming responses**: Live Server-Sent Events showing thinking, tool calls, and tool results.
+- **Tool call inspector**: Collapsible cards with input + result, diff colouring, and status badges.
+- **Approval dialog**: Granular controls (`Approve once` / `Always` / `Deny`) for potentially dangerous operations.
+- **Mode switcher**: Seamlessly swap between `Plan` / `Agent` / `Yolo` and per-turn sandboxes.
+- **Session library**: Saved locally, shared directly with the TUI.
+- **Live Meters**: Keep an eye on tokens and costs effortlessly.
 
-- **Three-pane layout**: sessions sidebar · message stream · composer with mode/sandbox toggles
-- **Streaming responses** via Server-Sent Events; thinking, tool calls, and tool results render live
-- **Tool call inspector**: collapsible cards with input + result, diff colouring, and status badges
-- **Approval dialog** for `write_file`, `edit_file`, `run_shell`, etc. (Approve once / Always / Deny)
-- **Mode switcher** (Plan / Agent / Yolo) and **sandbox switcher** (read-only / workspace-write / danger-full-access) per turn
-- **Session library**: sessions are persisted to `~/.mimo-code/sessions/` and shared with the TUI / `mimo-code session` CLI
-- **Live token + cost meters** in the top bar
-
-The backend is a tiny zero-dependency Node HTTP server bound to `127.0.0.1` by default; the frontend is plain HTML + CSS + ES modules with no build pipeline. Pass `--host 0.0.0.0` only if you intentionally want to expose the UI on your network.
-
-### TUI Interactive Mode
+### ⌨️ TUI Interactive Mode
 
 ```bash
 mimo-code
 ```
 
-Launches a full-screen Codex / Claude Code–style TUI. The interface includes:
+Launches a full-screen modern TUI featuring:
+- **Top status bar**: Model · Mode · CWD · Git branch · Context usage.
+- **Session area**: User messages, MiMo replies, collapsible tool results, and colored diff outputs.
+- **Bottom input box**: Color-coded borders based on mode (`plan` = blue, `agent` = cyan, `yolo` = red).
+- **Approval area**: Secure workflow prompts for write operations.
 
-- **Top status bar** — model · mode · cwd · git branch · context usage.
-- **Splash screen** and command hints.
-- **Session area** — user messages, MiMo replies, thinking blocks, tool calls, tool results (collapsible), with diff output rendered in ± color.
-- **Bottom input box** — border color changes by mode (plan = blue, agent = cyan, yolo = red); status line shows sandbox level, model, and auto-approve state.
-- **Approval area** — approve or deny write-file, edit-file, and run-shell operations with: Approve once / Always approve this session / Deny.
-
-Keyboard shortcuts:
-
+**Keyboard Shortcuts:**
 | Shortcut | Description |
 | --- | --- |
-| Enter | Send the current task (append `\` at end of line to continue on next line) |
-| Tab | Cycle through slash command completions |
-| Shift+Tab | Cycle Plan / Agent / YOLO mode |
-| ↑ / ↓ | Browse input history (persisted at `~/.mimo-code/history`) |
-| Ctrl+L | Clear the current message stream |
-| Ctrl+U | Clear the current input |
-| Ctrl+W | Delete the previous word |
-| Esc | Cancel approval / clear continuation; double-tap when idle to edit the previous message and roll back the turn |
-| Ctrl+C | Interrupt current run; double-tap to quit |
+| `Enter` | Send the current task (append `\` at end of line for multiline) |
+| `Tab` | Cycle through slash command completions |
+| `Shift+Tab` | Cycle Plan / Agent / YOLO modes |
+| `↑` / `↓` | Browse input history |
+| `Ctrl+L` | Clear the current message stream |
+| `Ctrl+U` | Clear the current input |
+| `Ctrl+W` | Delete the previous word |
+| `Esc` | Cancel approval / clear continuation (double-tap to edit previous message) |
+| `Ctrl+C` | Interrupt current run (double-tap to quit) |
 
-Slash commands:
-
+**Handy Slash Commands:**
 | Command | Description |
 | --- | --- |
 | `/help` | Show command help |
-| `/settings` | Run the settings wizard inside the TUI |
-| `/init` | Create `.mimo-code.json`, `AGENTS.md`, and example skill/subagent in the current project |
+| `/settings` | Run the TUI settings wizard |
+| `/init` | Bootstrap project configuration (`.mimo-code.json`, `AGENTS.md`) |
 | `/sessions` | List saved sessions |
-| `/new [title]` | Start a new resumable session |
-| `/load <session-id-prefix>` | Load a saved session |
-| `/resume [session-id-prefix]` | Resume the most recent saved session or a specific session |
-| `/save` | Save the current session to `~/.mimo-code/sessions/` |
-| `/mcp` | Show current MCP server configuration |
-| `/skill` | Show skills declared in the config file |
-| `/skills` | Auto-discover skills in `.mimo/skills/*.md` and `~/.mimo-code/skills/*.md` |
-| `/agents` | List named subagents in `.mimo/agents/*.md` |
-| `/sandbox [level]` | View or switch sandbox: `read-only` / `workspace-write` / `danger-full-access` |
-| `/hooks` | Show current Hook configuration |
-| `/tools` | Show built-in tools and MCP tools |
-| `/expand <#index\|all>` / `/collapse <#index\|all>` | Expand / collapse tool result blocks |
-| `/diff` | Show workspace git diff |
+| `/mcp`, `/skills`, `/hooks`, `/agents` | Inspect configurations |
 | `/doctor` | Run configuration diagnostics |
-| `/memory [note]` | Add or list persistent memory notes |
-| `/undo` | Undo unstaged changes to HEAD |
-| `/worktree [list\|new\|open\|remove]` | Manage git worktrees |
-| `/compact` | Summarize history to reduce context pressure |
-| `/context` | Show current context window usage |
-| `/cost` | Show estimated cost for the current session |
-| `/todo` | Show the agent task list |
-| `/network [allow\|deny <host>]` | View or configure network allow/deny list |
-| `/export <path>` | Export the current session to JSON |
-| `/workflow` | Overview of MCP, skills, hooks, subagents, and local tool status |
-| `/timeline` | Show recent activity timeline for the current session |
-| `/mode [plan\|agent\|yolo]` | Open an interactive mode selector or switch mode |
-| `/model [name]` | Open an interactive model selector or switch model |
-| `/status` | Show runtime model, session, tools, and token status |
-| `/info` | Show model, token, context, tools, workflow, and cost details |
-| `/clear` | Clear visible messages |
-| `/exit` | Exit the TUI |
+| `/diff`, `/undo`, `/worktree` | Git workflow support |
+| `/status`, `/info`, `/cost`, `/context` | Monitor current execution |
 
-### Project Structure
+*(For the complete command list, simply type `/` in the TUI.)*
 
-After running `/init`, the following structure is recommended for version control:
+### 🤖 Non-interactive Mode
 
+Pass tasks directly for quick one-offs:
+```bash
+mimo-code run "Read this repository and summarize the main modules"
+mimo-code run --dry-run "Add unit tests for src/foo.ts and run them"
 ```
+
+---
+
+## 📂 Project Structure
+
+After running `/init`, maintain cleanliness by versioning these files:
+
+```bash
 .mimo-code.json          # Project-level runtime config
 AGENTS.md                # Project notes injected into the system prompt
 .mimo/
-  skills/                # *.md skill files with YAML frontmatter declaring trigger keywords
-  agents/                # *.md named subagent files with YAML frontmatter declaring tool allowlists
+  skills/                # *.md skill files (YAML frontmatter)
+  agents/                # *.md named subagent files (YAML frontmatter)
 ```
 
-#### Skills
+### 🧠 Skills
 
-Place Markdown files in `.mimo/skills/` or `~/.mimo-code/skills/`, for example:
+Drop Markdown files in `.mimo/skills/` or `~/.mimo-code/skills/`. They trigger based on keywords:
 
 ```markdown
 ---
@@ -386,15 +322,12 @@ description: Reminds the agent to run tests after every change.
 triggers: [test, vitest, jest, pytest]
 always: false
 ---
-
 When the user changes source code, always run the relevant test suite ...
 ```
 
-If any `triggers` keyword (case-insensitive) appears in the user prompt, the skill is automatically injected into the system prompt for that request. `always: true` loads the skill unconditionally.
+### 🗣️ Named Subagents
 
-#### Named Subagents
-
-Place Markdown files in `.mimo/agents/`; the body becomes that subagent's system prompt:
+Create specialized assistants in `.mimo/agents/`:
 
 ```markdown
 ---
@@ -403,96 +336,13 @@ description: Investigates a topic and produces a written summary.
 tools: [read_file, search_text, file_search, web_fetch]
 max_iterations: 8
 ---
-
 You are a focused research assistant ...
 ```
+The main agent can dispatch tasks to these via the `agent_dispatch` tool.
 
-The main agent dispatches tasks to subagents by name via the `agent_dispatch` tool. Use `/agents` to list all discovered subagents.
+---
 
-#### Sandbox
-
-The CLI validates each tool call against the active sandbox level before execution:
-
-| Level | Behavior |
-| --- | --- |
-| `read-only` | Only allows tools with `readOnly: true` (read / search / list, etc.). |
-| `workspace-write` (default agent mode) | Allows writes within the workspace; blocks absolute paths or `..` traversal. |
-| `danger-full-access` (yolo mode) | No sandbox restrictions; equivalent to auto-approve everything. |
-
-Use `/sandbox` to switch levels at runtime; `/mode` also synchronizes the sandbox level.
-
-#### Hooks v2
-
-`hooks` supports the following events: `session_start`, `user_prompt`, `before_tool`, `pre_tool_use`, `after_tool`, `post_tool_use`, `notification`, `stop`, `agent_done`, `subagent_done`.
-
-- All hooks receive the `MIMO_HOOK_EVENT` and `MIMO_HOOK_PAYLOAD` environment variables, and a JSON payload via stdin.
-- Tool-related hooks also receive `MIMO_TOOL_NAME`; the stop hook receives `MIMO_STOP_REASON`.
-- When `pre_tool_use` exits with code `2`, the tool call is blocked; any other non-zero exit code is treated as a soft warning.
-- `matcher`, `allowTools`, and `blockTools` support exact tool names or `prefix*` wildcards, e.g. `"matcher": "run_*"` applies only to shell/run tools.
-- `timeoutMs` overrides the timeout for a single hook; `continueOnCancel: true` allows subsequent hooks to continue after a block.
-- Test a hook chain manually: `mimo-code hooks run pre_tool_use --payload '{"toolName":"run_shell"}'`.
-
-#### MCP
-
-MCP stdio servers are spawned once at CLI startup and kept alive for the entire session; they are shut down together on `process.exit` / `SIGINT`. Configuration follows the `mcpServers` format shown above.
-
-Resumable sessions are saved as JSON files at:
-
-```text
-~/.mimo-code/sessions/<session-id>.json
-```
-
-When a session is loaded, new tasks continue with the historical messages.
-
-To use the older prompt-based console mode:
-
-```bash
-mimo-code --no-tui
-```
-
-### Non-interactive Mode
-
-```bash
-mimo-code run "Read this repository and summarize the main modules"
-mimo-code run "Add unit tests for src/foo.ts and run them"
-```
-
-### Specify a Working Directory
-
-```bash
-mimo-code run -C /path/to/project "Fix TypeScript type errors"
-```
-
-### Using a Token Plan
-
-```bash
-MIMO_API_KEY="YOUR_TOKEN_PLAN_KEY" \
-  mimo-code run \
-  --token-plan-region sgp \
-  --model mimo-v2.5-pro \
-  "Inspect the project and run the tests"
-```
-
-### Using a Custom Base URL
-
-```bash
-mimo-code run \
-  --base-url https://api.xiaomimimo.com \
-  --model mimo-v2.5 \
-  "Explain the code structure in the current directory"
-```
-
-### Dry-run Mode
-
-Dry-run prevents file writes and shell commands from actually executing:
-
-```bash
-mimo-code run --dry-run "Refactor this module and run the tests"
-```
-
-## Built-in Tools
-
-The agent can call the following tools:
+## 🛠️ Built-in Tools
 
 | Tool | Description |
 | --- | --- |
@@ -503,62 +353,38 @@ The agent can call the following tools:
 | `search_text` | Search the workspace with a JavaScript regex |
 | `run_shell` | Run a shell command inside the workspace |
 
-## MCP & Skills
+---
+
+## 🔌 MCP & Skills
 
 ### MCP stdio Tools
 
-`mcpServers` stores each MCP server's `name`, `command`, `args`, `env`, and `enabled` flag. When starting the TUI or running non-interactively, MiMo Code spawns enabled stdio MCP servers, performs JSON-RPC `initialize` and `tools/list`, and registers discovered tools as agent-callable, named:
+Enabled stdio MCP servers are spawned on startup. MiMo CLI natively supports `initialize`, `tools/list`, and `tools/call`.
+The agent will have access to named instances like `mcp__<server-name>__<tool-name>`. 
+Check `/tools` in the TUI for everything available!
 
-```text
-mcp__<server-name>__<tool-name>
-```
+### Skills Integration
 
-When the model calls an MCP tool, the CLI forwards the arguments to the server via `tools/call` and returns the text content to the agent. Use `/mcp` in the TUI to see MCP configuration, and `/tools` to see all built-in and MCP tools.
-
-### Skills
-
-`skills` stores each skill's `name`, `path`, `description`, and `enabled` flag. Before each agent run, enabled skills' Markdown content is read and injected as system context:
-
+Skills defined in the config run dynamically to inject smart context:
 ```json
 {
   "skills": [
     {
       "name": "test-first",
       "path": ".mimo/skills/test-first.md",
-      "description": "Prefer tests before edits",
       "enabled": true
     }
   ]
 }
 ```
 
-Use `/skill` in the TUI to view the current skill configuration.
+---
 
-## Hooks
+## 🪝 Hooks
 
-Hooks forward agent lifecycle events to local commands. Supported events:
+Hooks map agent lifecycle events seamlessly to your local scripts via `spawn()`. 
 
-| Event | When it fires |
-| --- | --- |
-| `session_start` | TUI session starts |
-| `user_prompt` | User sends a task |
-| `before_tool` | Before a tool call |
-| `pre_tool_use` | Before a tool call; exit code 2 blocks the call |
-| `after_tool` | After a tool call |
-| `post_tool_use` | After a tool call (compatibility alias) |
-| `notification` | Notification-type events |
-| `stop` | User interrupts or agent stops |
-| `agent_done` | Agent finishes a response |
-| `subagent_done` | Subagent finishes a response |
-
-Hook commands are executed via `spawn(command, args)` with the current workspace as the working directory. Environment variables:
-
-| Variable | Description |
-| --- | --- |
-| `MIMO_HOOK_EVENT` | Current event name |
-| `MIMO_HOOK_PAYLOAD` | JSON payload with fields: cwd, prompt, toolName, toolInput, toolOutput, finalMessage, etc. |
-| `MIMO_TOOL_NAME` | Tool name for tool-related hooks |
-| `MIMO_STOP_REASON` | Stop reason for the stop hook |
+**Events:** `session_start`, `user_prompt`, `before_tool`, `pre_tool_use`, `after_tool`, `post_tool_use`, `notification`, `stop`, `agent_done`, `subagent_done`.
 
 Example:
 
@@ -576,63 +402,53 @@ Example:
 }
 ```
 
-Use `/hooks` in the TUI to view Hook configuration.
+> **Pro-Tip**: When a `pre_tool_use` hook exits with code `2`, the tool call is instantly blocked. Custom validation made easy!
 
-## Security Boundaries
+---
 
-- File tools refuse to access paths outside the current workspace.
-- `--dry-run` can be used to preview writes and command execution.
-- Never put real API Keys in repository files or commit history.
-- The agent still relies on model judgment before running shell commands; when working with production repositories, use `--dry-run` first or review the output manually.
+## 🛡️ Security Boundaries
 
-## Pricing Reference
+We take sandbox security seriously:
+- **Workspace Lock**: File tools aggressively refuse to access paths outside the current workspace.
+- **Dry Runs**: Use `--dry-run` to trace and review operations harmlessly.
+- **Approval Flow**: `workspace-write` mode stops malicious execution but allows files while `danger-full-access` unchains the beast.
+- **Manual Overrides**: You always retain validation power through the approval dialog.
 
-Pay-as-you-go API:
+---
 
-- **China region** — Pro series: input (cache miss) ¥7.00 / MTok, output ¥21.00 / MTok; `mimo-v2.5`: input (cache miss) ¥2.80 / MTok, output ¥14.00 / MTok; `mimo-v2-flash`: input (cache miss) ¥0.70 / MTok, output ¥2.10 / MTok.
-- **International** — Pro series: input (cache miss) $1.00 / MTok, output $3.00 / MTok; `mimo-v2.5`: input (cache miss) $0.40 / MTok, output $2.00 / MTok; `mimo-v2-flash`: input (cache miss) $0.10 / MTok, output $0.30 / MTok.
-- Cache writes are free; cache-hit input price is lower.
-- `mimo-v2-omni` and `mimo-v2-flash` do not support the 1M context tier.
+## 💰 Pricing Reference
 
-Token Plan:
+**Pay-as-you-go API:**
+- **China region** — Pro series: Input ¥7.00/MTok, Output ¥21.00/MTok | `mimo-v2.5`: Input ¥2.80/MTok, Output ¥14.00/MTok.
+- **International** — Pro series: Input $1.00/MTok, Output $3.00/MTok | `mimo-v2.5`: Input $0.40/MTok, Output $2.00/MTok.
 
-- Pro models consume `2x` the total input + output token count.
-- Other models consume `1x`.
+> *Cache writes are free, accelerating your repeated queries for less money.*
 
-For authoritative pricing, refer to the MiMo console.
+**Token Plan:**
+- Pro models consume `2x` the total input + output token count. Others consume `1x`.
 
-## Development & Testing
+*(Check the official MiMo console for real-time adjustments!)*
+
+---
+
+## 🧑‍💻 Development & Testing
+
+Want to hack on MiMo Code CLI? Welcome aboard!
 
 ```bash
 npm run lint
 npm run typecheck
 npm test
 npm run build
-node dist/cli.js --help
-node dist/cli.js models
-node dist/cli.js base-url --region sgp
 ```
 
-TUI smoke test:
-
+**TUI Smoke Test:**
 ```bash
 MIMO_API_KEY=dummy node dist/cli.js --help
 MIMO_API_KEY=dummy node dist/cli.js --no-tui
 ```
 
-## Project Structure
-
-```text
-src/
-  agent/      Agent loop, system prompt, token usage aggregation
-  api/        OpenAI / Anthropic compatible API clients
-  cli.ts      CLI entry point
-  config/     Config loading, saving, interactive config, TUI settings wizard
-  hooks.ts    Agent lifecycle Hook execution
-  mcp/        stdio MCP JSON-RPC client and tool registration
-  session/    Resumable session storage
-  skills/     Skill file loading and context injection
-  tools/      File, search, and shell tools
-  ui/         Ink TUI, slash commands, terminal output and formatting
-  utils/      General utilities
-```
+---
+<div align="center">
+  <i>Made with ❤️ by the KoinaAI Team</i>
+</div>
