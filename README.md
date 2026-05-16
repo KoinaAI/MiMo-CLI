@@ -448,6 +448,8 @@ MIMO_API_KEY=dummy node dist/cli.js --help
 MIMO_API_KEY=dummy node dist/cli.js --no-tui
 ```
 
+> Thanks to [LINUX DO](https://linux.do/) community.
+
 ---
 <div align="center">
   <i>Made with ❤️ by the KoinaAI Team</i>
